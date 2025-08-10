@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Kimlik Barkod & MRZ Okuyucu</title>
+<style>
+  :root { --bg:#0f1115; --card:#171923; --ink:#e8e8ea; --muted:#9aa0a6; --acc:#4f8cff; }
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial}
+  .wrap{max-width:900px;margin:0 auto;padding:16px}
+  .card{background:var(--card);border-radius:18px;box-shadow:0 6px 30px rgb(0 0 0 / .25);padding:16px;margin-bottom:16px}
+  h1{font-size:20px;margin:0 0 8px}
+  .row{display:flex;gap:12px;flex-wrap:wrap}
+  button{border:0;border-radius:12px;padding:12px 14px;cursor:pointer;background:var(--acc);color:white;font-weight:600}
+  button.secondary{background:#2a2e3a}
+  button.danger{background:#e54848}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  label{display:block;margin:8px 0 4px;font-size:13px;color:var(--muted)}
+  input,textarea,select{width:100%;padding:10px 12px;border-radius:10px;border:1px solid #2b2f3a;background:#0e1016;color:var(--ink)}
+  table{width:100%;border-collapse:collapse}
+  th,td{padding:10px;border-bottom:1px solid #2a2e3a;font-size:14px;word-break:break-word}
+  .muted{color:var(--muted)}
+  .video-wrap{position:relative;border-radius:14px;overflow:hidden;border:1px solid #2a2e3a}
+  video{width:100%;max-height:55vh;background:#000}
+  .scanline{position:absolute;left:0;right:0;top:45%;height:2px;background:rgba(79,140,255,.9);box-shadow:0 0 14px rgba(79,140,255,.9);animation:scan 2.2s linear infinite}
+  @keyframes scan{0%{top:10%}50%{top:90%}100%{top:10%}}
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+  @media (max-width:700px){.grid{grid-template-columns:1fr}}
+  .pill{display:inline-block;padding:6px 10px;border-radius:999px;background:#202431;color:#cbd5e1;font-size:12px}
+</style>
+<!-- ZXing (barkod/pdf417) -->
+<script src="https://unpkg.com/@zxing/browser@0.1.4/umd/index.min.js"></script>
+<!-- Tesseract (MRZ OCR) -->
+<script src="https://unpkg.com/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>Kimlik Barkod & MRZ Okuyucu</h1>
+    <div class="muted" style="margin-bottom:8px">
+      • <span class="pill">Barkod Modu</span> PDF417/QR/Code128 okur.<br>
+      • <span class="pill">MRZ Modu</span> arka yüzdeki MRZ’yi OCR ile okur (Ad/Soyad/Doğum Tarihi çıkarır).<br>
+      • Kayıtlar cihazınızda (localStorage) tutulur; TXT dışa aktarabilirsiniz.
+    </div>
+    <div class="row">
+      <button id="btnStartBarcode">Barkod Tara</button>
+      <button id="btnStartMRZ" class="secondary">MRZ Tara (OCR)</button>
+      <button id="btnStop" class="secondary">Durdur</button>
+      <button id="btnExport" class="secondary">TXT dışa aktar</button>
+      <button id="btnClear" class="danger">Tüm kayıtları sil</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="video-wrap">
+      <video id="video" playsinline muted></video>
+      <div class="scanline" id="scanline" style="display:none"></div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button id="btnSwitchCam" class="secondary">Kamera değiştir</button>
+      <span class="muted" id="status">Hazır.</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h1>Sonuç / Düzenle</h1>
+    <div class="grid">
+      <div>
+        <label>TC Kimlik No (varsa)</label>
+        <input id="tckn" placeholder="11 haneli" />
+      </div>
+      <div>
+        <label>Ad</label>
+        <input id="ad" />
+      </div>
+      <div>
+        <label>Soyad</label>
+        <input id="soyad" />
+      </div>
+      <div>
+        <label>Doğum Tarihi (YYYY-MM-DD)</label>
+        <input id="dogum" placeholder="1990-01-31" />
+      </div>
+    </div>
+    <label>Ham veri (okunan metin)</label>
+    <textarea id="raw" rows="3" spellcheck="false"></textarea>
+    <div class="row" style="margin-top:10px">
+      <button id="btnSave">Kaydet</button>
+      <span class="muted">Kaydetmeden önce bilgileri kontrol edip düzeltebilirsiniz.</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h1>Kayıtlar</h1>
+    <div class="muted" style="margin-bottom:6px">Veriler cihazınızda tutulur.</div>
+    <table id="tbl">
+      <thead>
+        <tr><th>#</th><th>TCKN</th><th>Ad</th><th>Soyad</th><th>Doğum</th><th>Sil</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+/* -------------------- Durum / Depo -------------------- */
+let currentMode = null; // 'barcode' | 'mrz'
+let currentStream = null;
+let devices = [];
+let deviceIndex = 0;
+let reader = null;
+const storeKey = 'tcid_records_v1';
+
+function loadRecords(){
+  try{ return JSON.parse(localStorage.getItem(storeKey)||'[]'); }catch(_){ return []; }
+}
+function saveRecords(list){
+  localStorage.setItem(storeKey, JSON.stringify(list||[]));
+  renderTable();
+}
+function renderTable(){
+  const tbody = document.querySelector('#tbl tbody');
+  const list = loadRecords();
+  tbody.innerHTML = '';
+  list.forEach((r,i)=>{
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${i+1}</td>
+      <td>${r.tckn||''}</td>
+      <td>${r.ad||''}</td>
+      <td>${r.soyad||''}</td>
+      <td>${r.dogum||''}</td>
+      <td><button class="danger" data-i="${i}">Sil</button></td>`;
+    tbody.appendChild(tr);
+  });
+  tbody.querySelectorAll('button[data-i]').forEach(b=>{
+    b.onclick = () => {
+      const i = +b.dataset.i;
+      const list = loadRecords();
+      list.splice(i,1);
+      saveRecords(list);
+    };
+  });
+}
+renderTable();
+
+/* -------------------- Yardımcılar -------------------- */
+const $ = sel => document.querySelector(sel);
+const setStatus = t => $('#status').textContent = t;
+
+/* TCKN yakalama (barkodlarda sadece TCKN gelebilir) */
+function extractTCKN(text){
+  const m = (text||'').replace(/\D/g,'').match(/(\d{11})/);
+  return m ? m[1] : '';
+}
+
+/* MRZ çözümleyici (TR Kimlik – 3 satırlı ICAO 9303) 
+   Kaynak şema ve konumlar: doğum tarihi (YYMMDD) 2. satır 1-6,
+   isimler 3. satırda SOYAD<<AD<... biçiminde.   
+  – MRZ şeması (satır uzunlukları ve alan konumları) ICAO 9303’a uyar; kod, doğum tarihini **YYMMDD → YYYY-MM-DD** olarak dönüştürür, **SOYAD<<AD** biçimini ayırır. :contentReference[oaicite:3]{index=3}
+- **KVKK / gizlilik**: Yalnızca rızası olan kişilerin verisini toplayın; dışa aktarırken dosyayı güvenli saklayın.
+
+İsterseniz bunu **APK/IPA** olarak paketlemek için bir sonraki adımda Python’a en yakın yol olarak **BeeWare/Briefcase + WebView** ile bu HTML’yi gömülü çalıştıran bir shell de yazabiliriz; ama bu tek dosyalık çözüm çoğu kullanımda işinizi görecek.
+::contentReference[oaicite:4]{index=4}
