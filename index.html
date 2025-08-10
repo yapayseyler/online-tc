@@ -6,23 +6,28 @@
 <title>Kimlik Barkod & MRZ Okuyucu</title>
 <style>
   :root { --bg:#0f1115; --card:#171923; --ink:#e8e8ea; --muted:#9aa0a6; --acc:#4f8cff; }
-  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+    font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
   .wrap{max-width:900px;margin:0 auto;padding:16px}
-  .card{background:var(--card);border-radius:18px;box-shadow:0 6px 30px rgb(0 0 0 / .25);padding:16px;margin-bottom:16px}
+  .card{background:var(--card);border-radius:18px;box-shadow:0 6px 30px rgb(0 0 0 / .25);
+    padding:16px;margin-bottom:16px}
   h1{font-size:20px;margin:0 0 8px}
   .row{display:flex;gap:12px;flex-wrap:wrap}
-  button{border:0;border-radius:12px;padding:12px 14px;cursor:pointer;background:var(--acc);color:white;font-weight:600}
+  button{border:0;border-radius:12px;padding:12px 14px;cursor:pointer;background:var(--acc);
+    color:white;font-weight:600}
   button.secondary{background:#2a2e3a}
   button.danger{background:#e54848}
   button:disabled{opacity:.5;cursor:not-allowed}
   label{display:block;margin:8px 0 4px;font-size:13px;color:var(--muted)}
-  input,textarea,select{width:100%;padding:10px 12px;border-radius:10px;border:1px solid #2b2f3a;background:#0e1016;color:var(--ink)}
+  input,textarea,select{width:100%;padding:10px 12px;border-radius:10px;border:1px solid #2b2f3a;
+    background:#0e1016;color:var(--ink)}
   table{width:100%;border-collapse:collapse}
   th,td{padding:10px;border-bottom:1px solid #2a2e3a;font-size:14px;word-break:break-word}
   .muted{color:var(--muted)}
   .video-wrap{position:relative;border-radius:14px;overflow:hidden;border:1px solid #2a2e3a}
   video{width:100%;max-height:55vh;background:#000}
-  .scanline{position:absolute;left:0;right:0;top:45%;height:2px;background:rgba(79,140,255,.9);box-shadow:0 0 14px rgba(79,140,255,.9);animation:scan 2.2s linear infinite}
+  .scanline{position:absolute;left:0;right:0;top:45%;height:2px;background:rgba(79,140,255,.9);
+    box-shadow:0 0 14px rgba(79,140,255,.9);animation:scan 2.2s linear infinite}
   @keyframes scan{0%{top:10%}50%{top:90%}100%{top:10%}}
   .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
   @media (max-width:700px){.grid{grid-template-columns:1fr}}
@@ -103,12 +108,12 @@
 </div>
 
 <script>
-/* -------------------- Durum / Depo -------------------- */
+/* --------------- Durum / Depo --------------- */
 let currentMode = null; // 'barcode' | 'mrz'
 let currentStream = null;
 let devices = [];
 let deviceIndex = 0;
-let reader = null;
+let codeReader = null;
 const storeKey = 'tcid_records_v1';
 
 function loadRecords(){
@@ -144,9 +149,10 @@ function renderTable(){
 }
 renderTable();
 
-/* -------------------- Yardımcılar -------------------- */
+/* --------------- Yardımcılar --------------- */
 const $ = sel => document.querySelector(sel);
 const setStatus = t => $('#status').textContent = t;
+function showScanline(flag){ $('#scanline').style.display = flag ? 'block' : 'none'; }
 
 /* TCKN yakalama (barkodlarda sadece TCKN gelebilir) */
 function extractTCKN(text){
@@ -154,11 +160,214 @@ function extractTCKN(text){
   return m ? m[1] : '';
 }
 
-/* MRZ çözümleyici (TR Kimlik – 3 satırlı ICAO 9303) 
-   Kaynak şema ve konumlar: doğum tarihi (YYMMDD) 2. satır 1-6,
-   isimler 3. satırda SOYAD<<AD<... biçiminde.   
-  – MRZ şeması (satır uzunlukları ve alan konumları) ICAO 9303’a uyar; kod, doğum tarihini **YYMMDD → YYYY-MM-DD** olarak dönüştürür, **SOYAD<<AD** biçimini ayırır. :contentReference[oaicite:3]{index=3}
-- **KVKK / gizlilik**: Yalnızca rızası olan kişilerin verisini toplayın; dışa aktarırken dosyayı güvenli saklayın.
+/* MRZ çözümleyici (3 satır – ICAO 9303) */
+function parseMRZ(mrzText){
+  const lines = (mrzText||'').toUpperCase().replace(/[^A-Z0-9<\n]/g,'').split('\n').map(l=>l.trim()).filter(Boolean);
+  if(lines.length < 2) return {};
+  // İkinci satır: doğum YYMMDD + ... (en baş 6 hane)
+  const birthYYMMDD = (lines[1].match(/^.{0,1}(\d{6})/)||[])[1] || '';
+  let dogum = '';
+  if(birthYYMMDD){
+    const yy = birthYYMMDD.slice(0,2), mm = birthYYMMDD.slice(2,4), dd = birthYYMMDD.slice(4,6);
+    const fullYear = +yy > 50 ? '19'+yy : '20'+yy; // kaba yaklaşım
+    dogum = `${fullYear}-${mm}-${dd}`;
+  }
+  // Üçüncü satır: SOYAD<<AD<AD2...
+  const l3 = lines[2] || lines[1] || '';
+  const parts = l3.split('<<');
+  let soyad = (parts[0]||'').replace(/</g,' ').trim();
+  let ad = (parts[1]||'').replace(/</g,' ').trim();
+  return { ad, soyad, dogum };
+}
 
-İsterseniz bunu **APK/IPA** olarak paketlemek için bir sonraki adımda Python’a en yakın yol olarak **BeeWare/Briefcase + WebView** ile bu HTML’yi gömülü çalıştıran bir shell de yazabiliriz; ama bu tek dosyalık çözüm çoğu kullanımda işinizi görecek.
-::contentReference[oaicite:4]{index=4}
+/* --------------- Kamera / ZXing --------------- */
+async function stopStream(){
+  showScanline(false);
+  if(codeReader){ try{ await codeReader.reset(); }catch(_){ } }
+  if(currentStream){
+    currentStream.getTracks().forEach(t=>t.stop());
+  }
+  currentStream = null;
+}
+
+async function listCameras(){
+  try{
+    const all = await ZXingBrowser.BrowserCodeReader.listVideoInputDevices();
+    devices = all || [];
+    deviceIndex = 0;
+  }catch(e){
+    devices = [];
+  }
+}
+
+async function startBarcode(){
+  await stopStream();
+  setStatus('Kamera açılıyor…');
+  currentMode = 'barcode';
+  if(!devices.length) await listCameras();
+  const deviceId = devices[deviceIndex]?.deviceId;
+  codeReader = new ZXingBrowser.BrowserMultiFormatReader();
+  // PDF417/QR/Code128 öncelik ver
+  const hints = new Map();
+  const BarcodeFormat = ZXingBrowser.BarcodeFormat;
+  hints.set(ZXingBrowser.DecodeHintType.POSSIBLE_FORMATS, [
+    BarcodeFormat.PDF_417, BarcodeFormat.QR_CODE, BarcodeFormat.CODE_128
+  ]);
+  codeReader.setHints(hints);
+
+  try{
+    const result = await codeReader.decodeFromVideoDevice(deviceId, 'video', (res, err)=>{
+      if(res){
+        showScanline(false);
+        setStatus('Barkod okundu.');
+        handleRaw(res.getText());
+      }else if(err && !(err instanceof ZXingBrowser.NotFoundException)){
+        console.error(err);
+      }
+    });
+    currentStream = result?.stream || $('#video').srcObject || null;
+    showScanline(true);
+    setStatus('Taranıyor… Stabil tutun.');
+  }catch(e){
+    console.error(e);
+    setStatus('Kamera başlatılamadı: ' + e.message);
+  }
+}
+
+async function switchCamera(){
+  if(!devices.length) await listCameras();
+  if(!devices.length){ setStatus('Kamera bulunamadı.'); return; }
+  deviceIndex = (deviceIndex + 1) % devices.length;
+  if(currentMode === 'barcode') startBarcode();
+  if(currentMode === 'mrz') startMRZ();
+}
+
+/* --------------- MRZ (Tesseract) --------------- */
+async function startMRZ(){
+  await stopStream();
+  currentMode = 'mrz';
+  setStatus('MRZ için kamera açılıyor…');
+  if(!devices.length) await listCameras();
+  const deviceId = devices[deviceIndex]?.deviceId;
+
+  try{
+    // Kamerayı aç
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: deviceId ? { deviceId:{exact:deviceId}, focusMode:'continuous' } : { facingMode:'environment' },
+      audio:false
+    });
+    $('#video').srcObject = stream;
+    $('#video').playsInline = true;
+    await $('#video').play();
+    currentStream = stream;
+    showScanline(true);
+    setStatus('MRZ taraması için kimliğin arka yüzünü yatay tutun. Netleşince otomatik OCR yapılır.');
+
+    // Periyodik OCR (2 sn)
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+
+    const runOCR = async () => {
+      if(currentMode !== 'mrz' || !$('#video').videoWidth) return;
+      const vw = $('#video').videoWidth, vh = $('#video').videoHeight;
+      // MRZ alt bant: alt %30
+      const h = Math.floor(vh*0.30);
+      const y = vh - h;
+      canvas.width = vw; canvas.height = h;
+      ctx.drawImage($('#video'), 0, y, vw, h, 0, 0, vw, h);
+
+      try{
+        setStatus('OCR yapılıyor…');
+        const { data:{ text } } = await Tesseract.recognize(canvas, 'ocrb+eng+tur', {
+          tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<',
+        });
+        const cleaned = text.replace(/[^\w<\n]/g,'').toUpperCase();
+        if(cleaned.replace(/\s/g,'').length > 20){
+          showScanline(false);
+          setStatus('MRZ okundu.');
+          handleRaw(cleaned);
+        }else{
+          setStatus('MRZ bekleniyor… Netlik arttırın.');
+        }
+      }catch(e){
+        console.error(e);
+        setStatus('OCR hatası: ' + e.message);
+      }
+    };
+
+    // 2 sn’de bir dene
+    const ocrInterval = setInterval(()=>{
+      if(currentMode !== 'mrz'){ clearInterval(ocrInterval); return; }
+      runOCR();
+    }, 2000);
+
+  }catch(e){
+    console.error(e);
+    setStatus('Kamera açılamadı: ' + e.message);
+  }
+}
+
+/* --------------- Ortak: okunan ham veriyi işle --------------- */
+function handleRaw(text){
+  $('#raw').value = text || '';
+  // Barkoddan 11 haneli TCKN gelebilir
+  const tckn = extractTCKN(text);
+  if(tckn) $('#tckn').value = tckn;
+
+  // MRZ ise ad/soyad/doğum çıkar
+  const { ad, soyad, dogum } = parseMRZ(text);
+  if(ad) $('#ad').value = ad;
+  if(soyad) $('#soyad').value = soyad;
+  if(dogum) $('#dogum').value = dogum;
+}
+
+/* --------------- Düğmeler --------------- */
+$('#btnStartBarcode').addEventListener('click', startBarcode);
+$('#btnStartMRZ').addEventListener('click', startMRZ);
+$('#btnStop').addEventListener('click', stopStream);
+$('#btnSwitchCam').addEventListener('click', switchCamera);
+
+$('#btnSave').addEventListener('click', ()=>{
+  const rec = {
+    tckn: $('#tckn').value.trim(),
+    ad: $('#ad').value.trim(),
+    soyad: $('#soyad').value.trim(),
+    dogum: $('#dogum').value.trim()
+  };
+  const list = loadRecords();
+  list.push(rec);
+  saveRecords(list);
+  setStatus('Kayıt eklendi.');
+});
+
+$('#btnClear').addEventListener('click', ()=>{
+  if(confirm('Tüm kayıtlar silinsin mi?')){
+    saveRecords([]);
+    setStatus('Kayıtlar silindi.');
+  }
+});
+
+$('#btnExport').addEventListener('click', ()=>{
+  const list = loadRecords();
+  const lines = list.map((r,i)=> `${i+1}\t${r.tckn||''}\t${r.ad||''}\t${r.soyad||''}\t${r.dogum||''}`);
+  const blob = new Blob([lines.join('\n')], {type:'text/plain;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'kayitlar.txt';
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+  setStatus('TXT dışa aktarıldı.');
+});
+
+/* --------------- İlk hazırlık --------------- */
+(async()=>{
+  try{
+    await listCameras();
+    setStatus(devices.length ? 'Hazır.' : 'Kamera bulunamadı. İzin vermeniz gerekebilir.');
+  }catch(e){
+    setStatus('Hazır.');
+  }
+})();
+</script>
+</body>
+</html>
