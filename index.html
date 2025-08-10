@@ -1,436 +1,99 @@
 <!doctype html>
 <html lang="tr">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Kimlik Barkod & MRZ Okuyucu (Çakışma Fix)</title>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Kamera Test + Barkod/MRZ</title>
 <style>
-  :root { --bg:#0f1115; --card:#171923; --ink:#e8e8ea; --muted:#9aa0a6; --acc:#4f8cff; }
-  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
-    font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
-  .wrap{max-width:960px;margin:0 auto;padding:16px}
-  .card{background:var(--card);border-radius:18px;box-shadow:0 6px 30px rgb(0 0 0 /.25);
-    padding:16px;margin-bottom:16px}
-  h1{font-size:20px;margin:0 0 8px}
-  .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
-  button{border:0;border-radius:12px;padding:12px 14px;cursor:pointer;background:var(--acc);
-    color:#fff;font-weight:600}
-  button.secondary{background:#2a2e3a}
-  button.danger{background:#e54848}
-  button:disabled{opacity:.5;cursor:not-allowed}
-  label{display:block;margin:8px 0 4px;font-size:13px;color:var(--muted)}
-  input,textarea,select{padding:10px 12px;border-radius:10px;border:1px solid #2b2f3a;
-    background:#0e1016;color:var(--ink)}
-  select{min-width:220px}
-  table{width:100%;border-collapse:collapse}
-  th,td{padding:10px;border-bottom:1px solid #2a2e3a;font-size:14px;word-break:break-word}
-  .muted{color:var(--muted)}
-  .video-wrap{position:relative;border-radius:14px;overflow:hidden;border:1px solid #2a2e3a}
-  video{width:100%;max-height:55vh;background:#000}
-  .scanline{position:absolute;left:0;right:0;top:45%;height:2px;background:rgba(79,140,255,.9);
-    box-shadow:0 0 14px rgba(79,140,255,.9);animation:scan 2.2s linear infinite}
-  @keyframes scan{0%{top:10%}50%{top:90%}100%{top:10%}}
-  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
-  @media (max-width:700px){.grid{grid-template-columns:1fr}}
-  .pill{display:inline-block;padding:6px 10px;border-radius:999px;background:#202431;color:#cbd5e1;font-size:12px}
-  .cap{font-size:12px;color:#cbd5e1;background:#202431;border-radius:999px;padding:3px 8px}
-  input[type="range"]{width:180px}
+body{margin:0;background:#111;color:#eee;font-family:sans-serif}
+.wrap{padding:12px;max-width:900px;margin:auto}
+.card{background:#1a1a1a;padding:12px;border-radius:8px;margin-bottom:12px}
+video{width:100%;max-height:50vh;background:#000;border-radius:8px}
+button{margin:4px;padding:10px 16px;border:0;border-radius:6px;background:#4f8cff;color:#fff;font-weight:600}
+button.secondary{background:#333}
+textarea,input{width:100%;padding:8px;margin-top:4px;border-radius:4px;border:1px solid #333;background:#000;color:#fff}
 </style>
-<!-- ZXing (barkod/pdf417) -->
 <script src="https://unpkg.com/@zxing/browser@0.1.4/umd/index.min.js"></script>
-<!-- Tesseract (MRZ OCR) -->
 <script src="https://unpkg.com/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
 </head>
 <body>
 <div class="wrap">
   <div class="card">
-    <h1>Kimlik Barkod & MRZ Okuyucu</h1>
-    <div class="muted" style="margin-bottom:8px">
-      • <span class="pill">Barkod</span> PDF417/QR/Code128 &nbsp; • <span class="pill">MRZ</span> OCR.<br>
-      Tek akış kullanımıyla “kamera açılıyor’da kalma” sorunu giderildi.
-    </div>
-    <div class="row">
-      <button id="btnStartBarcode">Barkod Tara</button>
-      <button id="btnStartMRZ" class="secondary">MRZ Tara (OCR)</button>
-      <button id="btnStop" class="secondary">Durdur</button>
-      <button id="btnExport" class="secondary">TXT dışa aktar</button>
-      <button id="btnClear" class="danger">Tüm kayıtları sil</button>
-    </div>
+    <button id="btnBarcode">Barkod Tara</button>
+    <button id="btnMRZ" class="secondary">MRZ Tara</button>
+    <button id="btnStop" class="secondary">Durdur</button>
+    <div id="status">Hazır.</div>
   </div>
-
   <div class="card">
-    <div class="row" style="margin-bottom:10px">
-      <label for="camera" style="margin:0">Kamera</label>
-      <select id="camera"></select>
-      <span id="caps" class="muted"></span>
-      <button id="btnTorch" class="secondary" disabled>Fener</button>
-      <label class="muted" style="margin-left:8px">Zoom</label>
-      <input id="zoom" type="range" min="1" max="1" step="0.1" value="1" disabled />
-    </div>
-    <div class="video-wrap" id="videoWrap">
-      <video id="video" playsinline muted autoplay></video>
-      <div class="scanline" id="scanline" style="display:none"></div>
-    </div>
-    <div class="row" style="margin-top:8px">
-      <span class="muted" id="status">Hazır.</span>
-    </div>
+    <select id="camera"></select>
+    <video id="video" autoplay playsinline muted></video>
   </div>
-
   <div class="card">
-    <h1>Sonuç / Düzenle</h1>
-    <div class="grid">
-      <div>
-        <label>TC Kimlik No (varsa)</label>
-        <input id="tckn" placeholder="11 haneli" />
-      </div>
-      <div>
-        <label>Ad</label>
-        <input id="ad" />
-      </div>
-      <div>
-        <label>Soyad</label>
-        <input id="soyad" />
-      </div>
-      <div>
-        <label>Doğum Tarihi (YYYY-MM-DD)</label>
-        <input id="dogum" placeholder="1990-01-31" />
-      </div>
-    </div>
-    <label>Ham veri (okunan metin)</label>
-    <textarea id="raw" rows="3" spellcheck="false"></textarea>
-    <div class="row" style="margin-top:10px">
-      <button id="btnSave">Kaydet</button>
-      <span class="muted">Kaydetmeden önce bilgileri kontrol edebilirsiniz.</span>
-    </div>
-  </div>
-
-  <div class="card">
-    <h1>Kayıtlar</h1>
-    <div class="muted" style="margin-bottom:6px">Veriler cihazınızda tutulur.</div>
-    <table id="tbl">
-      <thead>
-        <tr><th>#</th><th>TCKN</th><th>Ad</th><th>Soyad</th><th>Doğum</th><th>Sil</th></tr>
-      </thead>
-      <tbody></tbody>
-    </table>
+    <textarea id="raw" rows="4" placeholder="Ham veri..."></textarea>
   </div>
 </div>
-
 <script>
-/* ====== Durum / Depo ====== */
-let currentMode = null; // 'barcode' | 'mrz'
-let currentStream = null;
-let devices = [];
-let deviceIndex = 0;
-let codeReader = null; // ZXing
-let imageCapture = null;
-const storeKey = 'tcid_records_v4';
+let devices=[],currentStream=null,currentMode=null,codeReader=null;
 
-const $ = sel => document.querySelector(sel);
-const setStatus = t => $('#status').textContent = t;
-function showScanline(flag){ $('#scanline').style.display = flag ? 'block' : 'none'; }
-
-/* ====== Kayıtlar ====== */
-function loadRecords(){ try{ return JSON.parse(localStorage.getItem(storeKey)||'[]'); }catch(_){ return []; } }
-function saveRecords(list){ localStorage.setItem(storeKey, JSON.stringify(list||[])); renderTable(); }
-function renderTable(){
-  const tbody = $('#tbl tbody'); const list = loadRecords(); tbody.innerHTML = '';
-  list.forEach((r,i)=>{
-    const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${i+1}</td><td>${r.tckn||''}</td><td>${r.ad||''}</td>
-                    <td>${r.soyad||''}</td><td>${r.dogum||''}</td>
-                    <td><button class="danger" data-i="${i}">Sil</button></td>`;
-    tbody.appendChild(tr);
-  });
-  tbody.querySelectorAll('button[data-i]').forEach(b=>b.onclick=()=>{
-    const i=+b.dataset.i; const list=loadRecords(); list.splice(i,1); saveRecords(list);
-  });
-}
-renderTable();
-
-/* ====== Yardımcılar ====== */
-function extractTCKN(text){
-  const m = (text||'').replace(/\D/g,'').match(/(\d{11})/);
-  return m ? m[1] : '';
-}
-function preferBackCamera(cams){
-  const score = cam=>{
-    const L = (cam.label||'').toLowerCase();
-    let s = 0;
-    if(/back|rear|environment/.test(L)) s += 5;
-    if(/front|user/.test(L)) s -= 4;
-    if(/ultra[-\s]?wide|wide/.test(L)) s -= 2;
-    if(/tele|3x|5x|macro/.test(L)) s += 1;
-    if(/camera\s*0.*back/.test(L)) s += 2;
-    return s;
-  };
-  return cams.slice().sort((a,b)=>score(b)-score(a));
-}
-
-/* ====== Kamera / Stream ====== */
-async function stopStream(){
-  showScanline(false);
-  try{ if(codeReader){ await codeReader.reset(); } }catch(_){}
-  if(currentStream){ currentStream.getTracks().forEach(t=>t.stop()); }
-  currentStream = null; imageCapture = null;
-}
-
-async function enumerateCameras(){
-  try{ await navigator.mediaDevices.getUserMedia({video:true,audio:false}).then(s=>s.getTracks().forEach(t=>t.stop())); }catch(_){}
-  const all = await ZXingBrowser.BrowserCodeReader.listVideoInputDevices();
-  devices = preferBackCamera(all||[]);
-  const sel = $('#camera'); sel.innerHTML = '';
+async function listCameras(){
+  await navigator.mediaDevices.getUserMedia({video:true}).then(s=>s.getTracks().forEach(t=>t.stop()));
+  devices=await ZXingBrowser.BrowserCodeReader.listVideoInputDevices();
+  const sel=document.getElementById('camera');
+  sel.innerHTML='';
   devices.forEach((d,i)=>{
-    const opt = document.createElement('option');
-    opt.value = i;
-    opt.textContent = d.label || `Kamera ${i+1}`;
+    const opt=document.createElement('option');
+    opt.value=i; opt.text=d.label||`Kamera ${i+1}`;
     sel.appendChild(opt);
   });
-  deviceIndex = 0; sel.value = '0';
 }
-
-async function applyFocusZoomUI(track){
-  try{ imageCapture = new ImageCapture(track); }catch(_){ imageCapture = null; }
-
-  const capsSpan = $('#caps');
-  const zoom = $('#zoom'); const torchBtn = $('#btnTorch');
-  zoom.disabled = true; torchBtn.disabled = true; capsSpan.textContent = '';
-
-  const caps = track.getCapabilities ? track.getCapabilities() : {};
-  const sets = track.getSettings ? track.getSettings() : {};
-  const feats = [];
-
-  if(caps.zoom){
-    zoom.min = caps.zoom.min || 1;
-    zoom.max = caps.zoom.max || 1;
-    zoom.step = caps.zoom.step || 0.1;
-    zoom.value = sets.zoom || zoom.min;
-    zoom.disabled = false;
-    zoom.oninput = async () => { try{ await track.applyConstraints({advanced:[{zoom:+zoom.value}]}); }catch(e){} };
-    feats.push(`zoom:${zoom.min}–${zoom.max}`);
-  }
-  if(caps.torch){
-    torchBtn.disabled = false;
-    let on = sets.torch || false;
-    torchBtn.textContent = on ? 'Fener (Açık)' : 'Fener';
-    torchBtn.onclick = async ()=>{
-      on = !on;
-      try{
-        await track.applyConstraints({advanced:[{torch:on}]});
-        torchBtn.textContent = on ? 'Fener (Açık)' : 'Fener';
-      }catch(e){ setStatus('Fener desteklenmiyor: '+e.message); }
-    };
-    feats.push('torch');
-  }
-  try{
-    await track.applyConstraints({advanced:[{ focusMode:'continuous' }]});
-    feats.push('focus:continuous');
-  }catch(_){}
-
-  if(feats.length) capsSpan.innerHTML = feats.map(f=>`<span class="cap">${f}</span>`).join(' ');
+async function openCamera(index){
+  stopCamera();
+  const device=devices[index];
+  const constraints={video:{deviceId:{exact:device.deviceId}},audio:false};
+  currentStream=await navigator.mediaDevices.getUserMedia(constraints);
+  const v=document.getElementById('video');
+  v.srcObject=currentStream;
+  await v.play();
 }
-
-/* Tek akış aç: ZXing’in kendi akışı yok. */
-async function openStreamForSelected({high=true}={}){
-  if(!devices.length) await enumerateCameras();
-  const selected = devices[deviceIndex];
-  if(!selected){ setStatus('Kamera bulunamadı.'); return null; }
-
-  const primary = high ? {
-    video: {
-      deviceId: { exact: selected.deviceId },
-      facingMode: 'environment',
-      width: { ideal: 1920 }, height: { ideal: 1080 },
-      frameRate: { ideal: 60 },
-      advanced: [{ focusMode:'continuous' }]
-    },
-    audio:false
-  } : { video: { deviceId: { exact: selected.deviceId } }, audio:false };
-
-  try{
-    const stream = await navigator.mediaDevices.getUserMedia(primary);
-    $('#video').srcObject = stream;
-    $('#video').playsInline = true;
-    await $('#video').play();
-    currentStream = stream;
-
-    const track = stream.getVideoTracks()[0];
-    await applyFocusZoomUI(track);
-    // Dokun-odak
-    $('#videoWrap').onclick = async ()=>{
-      try{ await track.applyConstraints({advanced:[{ focusMode:'single-shot' }]}); }catch(_){}
-      setTimeout(async ()=>{ try{ await track.applyConstraints({advanced:[{ focusMode:'continuous' }]}); }catch(_){}} , 350);
-    };
-    return {stream, track};
-  }catch(e){
-    // daha gevşek kısıtlarla dener
-    if(high){
-      return openStreamForSelected({high:false});
-    }
-    setStatus('Kamera hatası: '+e.name+' – '+e.message);
-    return null;
-  }
+function stopCamera(){
+  if(codeReader) try{codeReader.reset();}catch(e){}
+  if(currentStream){currentStream.getTracks().forEach(t=>t.stop());}
+  currentStream=null;
 }
-
-/* ====== Barkod (ZXing: video element üzerinden) ====== */
+function handleResult(text){
+  document.getElementById('raw').value=text;
+  document.getElementById('status').textContent='Okundu.';
+}
 async function startBarcode(){
-  await stopStream();
-  currentMode = 'barcode';
-  setStatus('Kamera açılıyor…');
-
-  const opened = await openStreamForSelected({high:true});
-  if(!opened) return;
-
-  showScanline(true);
-
-  try{
-    const hints = new Map();
-    const BF = ZXingBrowser.BarcodeFormat;
-    hints.set(ZXingBrowser.DecodeHintType.POSSIBLE_FORMATS, [BF.PDF_417,BF.QR_CODE,BF.CODE_128]);
-    codeReader = new ZXingBrowser.BrowserMultiFormatReader(hints);
-
-    // Mevcut video elementini kullanarak sürekli tara
-    await codeReader.decodeFromVideoElementContinuously(
-      document.getElementById('video'),
-      (res, err) => {
-        if(res){
-          showScanline(false);
-          setStatus('Barkod okundu.');
-          handleRaw(res.getText());
-          // okuduktan sonra durdurmak istersen:
-          // stopStream();
-        }else if(err && !(err instanceof ZXingBrowser.NotFoundException)){
-          console.error(err);
-        }
-      }
-    );
-    setStatus('Barkod taranıyor… Kartı sabit tutun.');
-  }catch(e){
-    console.error(e);
-    setStatus('Barkod okuyucu hatası: '+e.message);
-  }
+  currentMode='barcode';
+  document.getElementById('status').textContent='Barkod taranıyor...';
+  await openCamera(document.getElementById('camera').value);
+  codeReader=new ZXingBrowser.BrowserMultiFormatReader();
+  codeReader.decodeFromVideoElementContinuously(document.getElementById('video'),(res,err)=>{
+    if(res) handleResult(res.getText());
+  });
 }
-
-/* ====== MRZ (Tesseract) ====== */
 async function startMRZ(){
-  await stopStream();
-  currentMode = 'mrz';
-  setStatus('Kamera açılıyor…');
-
-  const opened = await openStreamForSelected({high:true});
-  if(!opened) return;
-
-  showScanline(true);
-
-  const video = $('#video');
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d');
-
-  async function runOCR(){
-    if(currentMode!=='mrz' || !video.videoWidth) return;
-    const vw = video.videoWidth, vh = video.videoHeight;
-
-    // MRZ bölgesi: alt %28 – büyütüp eşikleyelim
-    const h = Math.floor(vh*0.28), y = vh - h;
-    const scale = 2;
-    canvas.width = vw*scale; canvas.height = h*scale;
-    ctx.drawImage(video, 0,y,vw,h, 0,0,canvas.width,canvas.height);
-
-    // Gri+ikili eşik
-    const img = ctx.getImageData(0,0,canvas.width,canvas.height);
-    const d = img.data;
-    for(let i=0;i<d.length;i+=4){
-      const g = (d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114)|0;
-      const bw = g > 140 ? 255 : 0;
-      d[i]=d[i+1]=d[i+2]=bw;
-    }
-    ctx.putImageData(img,0,0);
-
-    try{
-      setStatus('OCR yapılıyor…');
-      const { data:{ text } } = await Tesseract.recognize(canvas, 'eng', {
-        tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<'
-      });
-      const cleaned = text.toUpperCase().replace(/[^\w<\n]/g,'');
-      if(cleaned.replace(/\s/g,'').length > 20){
-        showScanline(false);
-        setStatus('MRZ okundu.');
-        handleRaw(cleaned);
-      }else{
-        setStatus('MRZ bekleniyor… Dokun-odak/Zoom deneyin.');
-      }
-    }catch(e){
-      console.error(e);
-      setStatus('OCR hatası: '+e.message);
-    }
-  }
-
-  // 2 sn’de bir dene
-  const iv = setInterval(()=>{
-    if(currentMode!=='mrz'){ clearInterval(iv); return; }
-    runOCR();
-  }, 2000);
+  currentMode='mrz';
+  document.getElementById('status').textContent='MRZ taranıyor...';
+  await openCamera(document.getElementById('camera').value);
+  const v=document.getElementById('video');
+  const c=document.createElement('canvas'),ctx=c.getContext('2d');
+  setInterval(async()=>{
+    if(currentMode!=='mrz'||!v.videoWidth) return;
+    c.width=v.videoWidth; c.height=v.videoHeight*0.3;
+    ctx.drawImage(v,0,v.videoHeight*0.7,v.videoWidth,v.videoHeight*0.3,0,0,c.width,c.height);
+    const {data:{text}}=await Tesseract.recognize(c,'eng',{tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<'});
+    if(text.trim().length>20) handleResult(text);
+  },2000);
 }
-
-/* ====== Ortak: ham veriyi işle ====== */
-function parseMRZ(mrzText){
-  const lines = (mrzText||'').toUpperCase().replace(/[^A-Z0-9<\n]/g,'').split('\n').map(l=>l.trim()).filter(Boolean);
-  if(lines.length < 2) return {};
-  const birthYYMMDD = (lines[1].match(/^.{0,1}(\d{6})/)||[])[1] || '';
-  let dogum = '';
-  if(birthYYMMDD){
-    const yy = birthYYMMDD.slice(0,2), mm = birthYYMMDD.slice(2,4), dd = birthYYMMDD.slice(4,6);
-    const fullYear = +yy > 50 ? '19'+yy : '20'+yy;
-    dogum = `${fullYear}-${mm}-${dd}`;
-  }
-  const l3 = lines[2] || lines[1] || '';
-  const parts = l3.split('<<');
-  let soyad = (parts[0]||'').replace(/</g,' ').trim();
-  let ad = (parts[1]||'').replace(/</g,' ').trim();
-  return { ad, soyad, dogum };
-}
-function handleRaw(text){
-  $('#raw').value = text || '';
-  const tckn = extractTCKN(text); if(tckn) $('#tckn').value = tckn;
-  const { ad, soyad, dogum } = parseMRZ(text);
-  if(ad) $('#ad').value = ad;
-  if(soyad) $('#soyad').value = soyad;
-  if(dogum) $('#dogum').value = dogum;
-}
-
-/* ====== UI olayları ====== */
-$('#btnStartBarcode').onclick = startBarcode;
-$('#btnStartMRZ').onclick = startMRZ;
-$('#btnStop').onclick = stopStream;
-$('#btnSave').onclick = ()=>{
-  const rec = { tckn:$('#tckn').value.trim(), ad:$('#ad').value.trim(),
-                soyad:$('#soyad').value.trim(), dogum:$('#dogum').value.trim() };
-  const list = loadRecords(); list.push(rec); saveRecords(list); setStatus('Kayıt eklendi.');
+document.getElementById('btnBarcode').onclick=startBarcode;
+document.getElementById('btnMRZ').onclick=startMRZ;
+document.getElementById('btnStop').onclick=()=>{stopCamera();document.getElementById('status').textContent='Durduruldu.';};
+document.getElementById('camera').onchange=()=>{
+  if(currentMode) openCamera(document.getElementById('camera').value);
 };
-$('#btnClear').onclick = ()=>{ if(confirm('Tüm kayıtlar silinsin mi?')){ saveRecords([]); setStatus('Kayıtlar silindi.'); } };
-$('#btnExport').onclick = ()=>{
-  const list = loadRecords();
-  const lines = list.map((r,i)=> `${i+1}\t${r.tckn||''}\t${r.ad||''}\t${r.soyad||''}\t${r.dogum||''}`);
-  const blob = new Blob([lines.join('\n')], {type:'text/plain;charset=utf-8'});
-  const url = URL.createObjectURL(blob); const a = document.createElement('a');
-  a.href = url; a.download = 'kayitlar.txt'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
-};
-
-$('#camera').onchange = async ()=>{
-  deviceIndex = +$('#camera').value;
-  if(currentMode==='barcode') startBarcode();
-  if(currentMode==='mrz') startMRZ();
-};
-
-/* ====== Başlangıç ====== */
-(async ()=>{
-  try{
-    await enumerateCameras();
-    setStatus(devices.length ? 'Hazır. Kamera seçip başlatın.' : 'Kamera bulunamadı veya izin verilmedi.');
-  }catch(e){
-    setStatus('Hazır.');
-  }
-})();
+listCameras();
 </script>
 </body>
 </html>
