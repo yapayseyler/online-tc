@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Kimlik Barkod & MRZ Okuyucu (Stabil)</title>
+<title>Kimlik Barkod & MRZ Okuyucu (Çakışma Fix)</title>
 <style>
   :root { --bg:#0f1115; --card:#171923; --ink:#e8e8ea; --muted:#9aa0a6; --acc:#4f8cff; }
   html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
@@ -47,7 +47,7 @@
     <h1>Kimlik Barkod & MRZ Okuyucu</h1>
     <div class="muted" style="margin-bottom:8px">
       • <span class="pill">Barkod</span> PDF417/QR/Code128 &nbsp; • <span class="pill">MRZ</span> OCR.<br>
-      Kamera seçip netleştirebilirsiniz. Torch/Zoom destekli cihazlarda etkinleşir.
+      Tek akış kullanımıyla “kamera açılıyor’da kalma” sorunu giderildi.
     </div>
     <div class="row">
       <button id="btnStartBarcode">Barkod Tara</button>
@@ -122,9 +122,9 @@ let currentMode = null; // 'barcode' | 'mrz'
 let currentStream = null;
 let devices = [];
 let deviceIndex = 0;
-let codeReader = null;
+let codeReader = null; // ZXing
 let imageCapture = null;
-const storeKey = 'tcid_records_v3';
+const storeKey = 'tcid_records_v4';
 
 const $ = sel => document.querySelector(sel);
 const setStatus = t => $('#status').textContent = t;
@@ -154,7 +154,6 @@ function extractTCKN(text){
   return m ? m[1] : '';
 }
 function preferBackCamera(cams){
-  // Etiket ve grup bilgisine göre arka kameraları öne al, ultra-wide'ı geriye at
   const score = cam=>{
     const L = (cam.label||'').toLowerCase();
     let s = 0;
@@ -162,7 +161,6 @@ function preferBackCamera(cams){
     if(/front|user/.test(L)) s -= 4;
     if(/ultra[-\s]?wide|wide/.test(L)) s -= 2;
     if(/tele|3x|5x|macro/.test(L)) s += 1;
-    // "camera 0, facing back" gibi tipik ana lensi hafif öne al
     if(/camera\s*0.*back/.test(L)) s += 2;
     return s;
   };
@@ -172,16 +170,13 @@ function preferBackCamera(cams){
 /* ====== Kamera / Stream ====== */
 async function stopStream(){
   showScanline(false);
-  if(codeReader){ try{ await codeReader.reset(); }catch(_){ } }
+  try{ if(codeReader){ await codeReader.reset(); } }catch(_){}
   if(currentStream){ currentStream.getTracks().forEach(t=>t.stop()); }
   currentStream = null; imageCapture = null;
 }
 
 async function enumerateCameras(){
-  try{
-    // izin tetikle
-    await navigator.mediaDevices.getUserMedia({video:true,audio:false}).then(s=>s.getTracks().forEach(t=>t.stop()));
-  }catch(_){}
+  try{ await navigator.mediaDevices.getUserMedia({video:true,audio:false}).then(s=>s.getTracks().forEach(t=>t.stop())); }catch(_){}
   const all = await ZXingBrowser.BrowserCodeReader.listVideoInputDevices();
   devices = preferBackCamera(all||[]);
   const sel = $('#camera'); sel.innerHTML = '';
@@ -194,27 +189,6 @@ async function enumerateCameras(){
   deviceIndex = 0; sel.value = '0';
 }
 
-/* "en iyi" arka kamerayı deneyerek seç (torch+focus varsa tercih et) */
-async function pickBestBackCamera(){
-  if(!devices.length) await enumerateCameras();
-  // sadece back olanları al
-  const backs = devices.filter(d => /back|rear|environment/i.test(d.label||''));
-  for(let i=0;i<backs.length;i++){
-    try{
-      const s = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: backs[i].deviceId } }, audio:false });
-      const track = s.getVideoTracks()[0];
-      const caps = track.getCapabilities ? track.getCapabilities() : {};
-      s.getTracks().forEach(t=>t.stop());
-      if(caps.torch || (caps.focusMode && caps.focusMode.length)){
-        deviceIndex = devices.findIndex(d=>d.deviceId===backs[i].deviceId);
-        $('#camera').value = String(deviceIndex);
-        return;
-      }
-    }catch(_){ /* bu kamera açılamıyorsa diğerini dene */ }
-  }
-  // olmazsa zaten enumerate sıralamasıyla kalır
-}
-
 async function applyFocusZoomUI(track){
   try{ imageCapture = new ImageCapture(track); }catch(_){ imageCapture = null; }
 
@@ -224,8 +198,8 @@ async function applyFocusZoomUI(track){
 
   const caps = track.getCapabilities ? track.getCapabilities() : {};
   const sets = track.getSettings ? track.getSettings() : {};
-
   const feats = [];
+
   if(caps.zoom){
     zoom.min = caps.zoom.min || 1;
     zoom.max = caps.zoom.max || 1;
@@ -256,20 +230,13 @@ async function applyFocusZoomUI(track){
   if(feats.length) capsSpan.innerHTML = feats.map(f=>`<span class="cap">${f}</span>`).join(' ');
 }
 
-async function startStreamFor(mode){
-  await stopStream();
-  currentMode = mode;
-  setStatus('Kamera açılıyor…');
+/* Tek akış aç: ZXing’in kendi akışı yok. */
+async function openStreamForSelected({high=true}={}){
   if(!devices.length) await enumerateCameras();
-
-  // Otomatik seçim: en iyi back kamerayı dene (torch+focus)
-  await pickBestBackCamera();
-
   const selected = devices[deviceIndex];
   if(!selected){ setStatus('Kamera bulunamadı.'); return null; }
 
-  // Öncelikli yüksek çözünürlük + environment + continuous focus
-  const primary = {
+  const primary = high ? {
     video: {
       deviceId: { exact: selected.deviceId },
       facingMode: 'environment',
@@ -278,66 +245,65 @@ async function startStreamFor(mode){
       advanced: [{ focusMode:'continuous' }]
     },
     audio:false
-  };
-  // Yedek daha gevşek
-  const fallback = { video: { deviceId: { exact: selected.deviceId } }, audio:false };
+  } : { video: { deviceId: { exact: selected.deviceId } }, audio:false };
 
   try{
-    let stream;
-    try{
-      stream = await navigator.mediaDevices.getUserMedia(primary);
-    }catch(e1){
-      console.warn('Primary constraints failed:', e1.name, e1.message);
-      stream = await navigator.mediaDevices.getUserMedia(fallback);
-    }
-    currentStream = stream;
+    const stream = await navigator.mediaDevices.getUserMedia(primary);
     $('#video').srcObject = stream;
-    $('#video').playsInline = true; // iOS
+    $('#video').playsInline = true;
     await $('#video').play();
+    currentStream = stream;
+
     const track = stream.getVideoTracks()[0];
     await applyFocusZoomUI(track);
-
-    // Dokun-odak tetikleme (destekliyorsa "single-shot" deneyip yine continuous’e dön)
+    // Dokun-odak
     $('#videoWrap').onclick = async ()=>{
-      try{
-        await track.applyConstraints({advanced:[{ focusMode:'single-shot' }]});
-        setTimeout(async ()=>{ try{ await track.applyConstraints({advanced:[{ focusMode:'continuous' }]}); }catch(_){} }, 350);
-      }catch(_){}
+      try{ await track.applyConstraints({advanced:[{ focusMode:'single-shot' }]}); }catch(_){}
+      setTimeout(async ()=>{ try{ await track.applyConstraints({advanced:[{ focusMode:'continuous' }]}); }catch(_){}} , 350);
     };
-
-    setStatus('Kamera hazır.');
-    return track;
+    return {stream, track};
   }catch(e){
-    console.error(e);
-    if(e.name === 'NotAllowedError') setStatus('Kamera izni verilmedi. Lütfen izin verin.');
-    else if(e.name === 'NotFoundError') setStatus('Uygun kamera bulunamadı.');
-    else if(e.name === 'NotReadableError') setStatus('Kamera başka uygulama tarafından kullanılıyor olabilir.');
-    else setStatus('Kamera hatası: ' + e.message);
+    // daha gevşek kısıtlarla dener
+    if(high){
+      return openStreamForSelected({high:false});
+    }
+    setStatus('Kamera hatası: '+e.name+' – '+e.message);
     return null;
   }
 }
 
-/* ====== Barkod (ZXing) ====== */
+/* ====== Barkod (ZXing: video element üzerinden) ====== */
 async function startBarcode(){
-  const track = await startStreamFor('barcode');
-  if(!track) return;
+  await stopStream();
+  currentMode = 'barcode';
+  setStatus('Kamera açılıyor…');
+
+  const opened = await openStreamForSelected({high:true});
+  if(!opened) return;
 
   showScanline(true);
-  const hints = new Map();
-  const BF = ZXingBrowser.BarcodeFormat;
-  hints.set(ZXingBrowser.DecodeHintType.POSSIBLE_FORMATS, [BF.PDF_417,BF.QR_CODE,BF.CODE_128]);
-  codeReader = new ZXingBrowser.BrowserMultiFormatReader(hints);
 
   try{
-    await codeReader.decodeFromVideoDevice(devices[deviceIndex]?.deviceId, 'video', (res, err)=>{
-      if(res){
-        showScanline(false);
-        setStatus('Barkod okundu.');
-        handleRaw(res.getText());
-      }else if(err && !(err instanceof ZXingBrowser.NotFoundException)){
-        console.error(err);
+    const hints = new Map();
+    const BF = ZXingBrowser.BarcodeFormat;
+    hints.set(ZXingBrowser.DecodeHintType.POSSIBLE_FORMATS, [BF.PDF_417,BF.QR_CODE,BF.CODE_128]);
+    codeReader = new ZXingBrowser.BrowserMultiFormatReader(hints);
+
+    // Mevcut video elementini kullanarak sürekli tara
+    await codeReader.decodeFromVideoElementContinuously(
+      document.getElementById('video'),
+      (res, err) => {
+        if(res){
+          showScanline(false);
+          setStatus('Barkod okundu.');
+          handleRaw(res.getText());
+          // okuduktan sonra durdurmak istersen:
+          // stopStream();
+        }else if(err && !(err instanceof ZXingBrowser.NotFoundException)){
+          console.error(err);
+        }
       }
-    });
+    );
     setStatus('Barkod taranıyor… Kartı sabit tutun.');
   }catch(e){
     console.error(e);
@@ -347,8 +313,13 @@ async function startBarcode(){
 
 /* ====== MRZ (Tesseract) ====== */
 async function startMRZ(){
-  const track = await startStreamFor('mrz');
-  if(!track) return;
+  await stopStream();
+  currentMode = 'mrz';
+  setStatus('Kamera açılıyor…');
+
+  const opened = await openStreamForSelected({high:true});
+  if(!opened) return;
+
   showScanline(true);
 
   const video = $('#video');
