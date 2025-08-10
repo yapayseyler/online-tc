@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Kimlik Barkod & MRZ Okuyucu (Gelişmiş Kamera)</title>
+<title>Kimlik Barkod & MRZ Okuyucu (Stabil)</title>
 <style>
   :root { --bg:#0f1115; --card:#171923; --ink:#e8e8ea; --muted:#9aa0a6; --acc:#4f8cff; }
   html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
@@ -124,7 +124,7 @@ let devices = [];
 let deviceIndex = 0;
 let codeReader = null;
 let imageCapture = null;
-const storeKey = 'tcid_records_v2';
+const storeKey = 'tcid_records_v3';
 
 const $ = sel => document.querySelector(sel);
 const setStatus = t => $('#status').textContent = t;
@@ -154,14 +154,16 @@ function extractTCKN(text){
   return m ? m[1] : '';
 }
 function preferBackCamera(cams){
-  // etikete göre arka ama "ultra" / "wide" geçmeyen birini öne al
+  // Etiket ve grup bilgisine göre arka kameraları öne al, ultra-wide'ı geriye at
   const score = cam=>{
     const L = (cam.label||'').toLowerCase();
     let s = 0;
     if(/back|rear|environment/.test(L)) s += 5;
-    if(/tele|3x|5x|macro/.test(L)) s += 2;
+    if(/front|user/.test(L)) s -= 4;
     if(/ultra[-\s]?wide|wide/.test(L)) s -= 2;
-    if(/front|user/.test(L)) s -= 3;
+    if(/tele|3x|5x|macro/.test(L)) s += 1;
+    // "camera 0, facing back" gibi tipik ana lensi hafif öne al
+    if(/camera\s*0.*back/.test(L)) s += 2;
     return s;
   };
   return cams.slice().sort((a,b)=>score(b)-score(a));
@@ -177,7 +179,7 @@ async function stopStream(){
 
 async function enumerateCameras(){
   try{
-    // izin istemek için bir kez boş stream al
+    // izin tetikle
     await navigator.mediaDevices.getUserMedia({video:true,audio:false}).then(s=>s.getTracks().forEach(t=>t.stop()));
   }catch(_){}
   const all = await ZXingBrowser.BrowserCodeReader.listVideoInputDevices();
@@ -192,32 +194,51 @@ async function enumerateCameras(){
   deviceIndex = 0; sel.value = '0';
 }
 
+/* "en iyi" arka kamerayı deneyerek seç (torch+focus varsa tercih et) */
+async function pickBestBackCamera(){
+  if(!devices.length) await enumerateCameras();
+  // sadece back olanları al
+  const backs = devices.filter(d => /back|rear|environment/i.test(d.label||''));
+  for(let i=0;i<backs.length;i++){
+    try{
+      const s = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: backs[i].deviceId } }, audio:false });
+      const track = s.getVideoTracks()[0];
+      const caps = track.getCapabilities ? track.getCapabilities() : {};
+      s.getTracks().forEach(t=>t.stop());
+      if(caps.torch || (caps.focusMode && caps.focusMode.length)){
+        deviceIndex = devices.findIndex(d=>d.deviceId===backs[i].deviceId);
+        $('#camera').value = String(deviceIndex);
+        return;
+      }
+    }catch(_){ /* bu kamera açılamıyorsa diğerini dene */ }
+  }
+  // olmazsa zaten enumerate sıralamasıyla kalır
+}
+
 async function applyFocusZoomUI(track){
-  try{
-    imageCapture = new ImageCapture(track);
-  }catch(_){ imageCapture = null; }
+  try{ imageCapture = new ImageCapture(track); }catch(_){ imageCapture = null; }
 
   const capsSpan = $('#caps');
   const zoom = $('#zoom'); const torchBtn = $('#btnTorch');
   zoom.disabled = true; torchBtn.disabled = true; capsSpan.textContent = '';
 
   const caps = track.getCapabilities ? track.getCapabilities() : {};
-  const feats = [];
+  const sets = track.getSettings ? track.getSettings() : {};
 
-  // Zoom
+  const feats = [];
   if(caps.zoom){
     zoom.min = caps.zoom.min || 1;
     zoom.max = caps.zoom.max || 1;
     zoom.step = caps.zoom.step || 0.1;
-    zoom.value = track.getSettings().zoom || zoom.min;
+    zoom.value = sets.zoom || zoom.min;
     zoom.disabled = false;
     zoom.oninput = async () => { try{ await track.applyConstraints({advanced:[{zoom:+zoom.value}]}); }catch(e){} };
     feats.push(`zoom:${zoom.min}–${zoom.max}`);
   }
-  // Torch
   if(caps.torch){
     torchBtn.disabled = false;
-    let on = false;
+    let on = sets.torch || false;
+    torchBtn.textContent = on ? 'Fener (Açık)' : 'Fener';
     torchBtn.onclick = async ()=>{
       on = !on;
       try{
@@ -227,9 +248,8 @@ async function applyFocusZoomUI(track){
     };
     feats.push('torch');
   }
-  // Odak modu
   try{
-    await track.applyConstraints({advanced:[{focusMode:'continuous'}]});
+    await track.applyConstraints({advanced:[{ focusMode:'continuous' }]});
     feats.push('focus:continuous');
   }catch(_){}
 
@@ -240,37 +260,48 @@ async function startStreamFor(mode){
   await stopStream();
   currentMode = mode;
   setStatus('Kamera açılıyor…');
-
   if(!devices.length) await enumerateCameras();
+
+  // Otomatik seçim: en iyi back kamerayı dene (torch+focus)
+  await pickBestBackCamera();
+
   const selected = devices[deviceIndex];
-  if(!selected){ setStatus('Kamera bulunamadı.'); return; }
+  if(!selected){ setStatus('Kamera bulunamadı.'); return null; }
+
+  // Öncelikli yüksek çözünürlük + environment + continuous focus
+  const primary = {
+    video: {
+      deviceId: { exact: selected.deviceId },
+      facingMode: 'environment',
+      width: { ideal: 1920 }, height: { ideal: 1080 },
+      frameRate: { ideal: 60 },
+      advanced: [{ focusMode:'continuous' }]
+    },
+    audio:false
+  };
+  // Yedek daha gevşek
+  const fallback = { video: { deviceId: { exact: selected.deviceId } }, audio:false };
 
   try{
-    const constraints = {
-      video: {
-        deviceId: { exact: selected.deviceId },
-        facingMode: 'environment',
-        width: { ideal: 1920 }, height: { ideal: 1080 },
-        // odak ve stabilite için ek ipuçları
-        focusMode: 'continuous',
-        advanced: [{ focusMode:'continuous' }]
-      },
-      audio:false
-    };
-    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    let stream;
+    try{
+      stream = await navigator.mediaDevices.getUserMedia(primary);
+    }catch(e1){
+      console.warn('Primary constraints failed:', e1.name, e1.message);
+      stream = await navigator.mediaDevices.getUserMedia(fallback);
+    }
     currentStream = stream;
     $('#video').srcObject = stream;
     $('#video').playsInline = true; // iOS
     await $('#video').play();
-
     const track = stream.getVideoTracks()[0];
     await applyFocusZoomUI(track);
 
-    // Dokun-odak (destek varsa)
-    $('#videoWrap').onclick = async (ev)=>{
-      if(!track.applyConstraints) return;
+    // Dokun-odak tetikleme (destekliyorsa "single-shot" deneyip yine continuous’e dön)
+    $('#videoWrap').onclick = async ()=>{
       try{
-        await track.applyConstraints({advanced:[{ focusMode:'continuous' }]});
+        await track.applyConstraints({advanced:[{ focusMode:'single-shot' }]});
+        setTimeout(async ()=>{ try{ await track.applyConstraints({advanced:[{ focusMode:'continuous' }]}); }catch(_){} }, 350);
       }catch(_){}
     };
 
@@ -280,6 +311,7 @@ async function startStreamFor(mode){
     console.error(e);
     if(e.name === 'NotAllowedError') setStatus('Kamera izni verilmedi. Lütfen izin verin.');
     else if(e.name === 'NotFoundError') setStatus('Uygun kamera bulunamadı.');
+    else if(e.name === 'NotReadableError') setStatus('Kamera başka uygulama tarafından kullanılıyor olabilir.');
     else setStatus('Kamera hatası: ' + e.message);
     return null;
   }
@@ -327,19 +359,19 @@ async function startMRZ(){
     if(currentMode!=='mrz' || !video.videoWidth) return;
     const vw = video.videoWidth, vh = video.videoHeight;
 
-    // MRZ bölgesi: en alt %28 – ölçekleyip eşikle
+    // MRZ bölgesi: alt %28 – büyütüp eşikleyelim
     const h = Math.floor(vh*0.28), y = vh - h;
-    const scale = 2; // çözünürlüğü arttır
+    const scale = 2;
     canvas.width = vw*scale; canvas.height = h*scale;
     ctx.drawImage(video, 0,y,vw,h, 0,0,canvas.width,canvas.height);
 
-    // Basit gri + ikili eşik
+    // Gri+ikili eşik
     const img = ctx.getImageData(0,0,canvas.width,canvas.height);
     const d = img.data;
     for(let i=0;i<d.length;i+=4){
       const g = (d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114)|0;
       const bw = g > 140 ? 255 : 0;
-      d[i]=d[i+1]=d[i+2]=bw; // siyah-beyaz
+      d[i]=d[i+1]=d[i+2]=bw;
     }
     ctx.putImageData(img,0,0);
 
@@ -354,7 +386,7 @@ async function startMRZ(){
         setStatus('MRZ okundu.');
         handleRaw(cleaned);
       }else{
-        setStatus('MRZ bekleniyor… Netlik/zoom deneyin.');
+        setStatus('MRZ bekleniyor… Dokun-odak/Zoom deneyin.');
       }
     }catch(e){
       console.error(e);
