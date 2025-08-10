@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Kamera Test + Barkod/MRZ</title>
+<title>Kamera Önce Aç - Sonra Tara</title>
 <style>
 body{margin:0;background:#111;color:#eee;font-family:sans-serif}
 .wrap{padding:12px;max-width:900px;margin:auto}
@@ -11,7 +11,7 @@ body{margin:0;background:#111;color:#eee;font-family:sans-serif}
 video{width:100%;max-height:50vh;background:#000;border-radius:8px}
 button{margin:4px;padding:10px 16px;border:0;border-radius:6px;background:#4f8cff;color:#fff;font-weight:600}
 button.secondary{background:#333}
-textarea,input{width:100%;padding:8px;margin-top:4px;border-radius:4px;border:1px solid #333;background:#000;color:#fff}
+textarea{width:100%;padding:8px;margin-top:4px;border-radius:4px;border:1px solid #333;background:#000;color:#fff}
 </style>
 <script src="https://unpkg.com/@zxing/browser@0.1.4/umd/index.min.js"></script>
 <script src="https://unpkg.com/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
@@ -33,7 +33,7 @@ textarea,input{width:100%;padding:8px;margin-top:4px;border-radius:4px;border:1p
   </div>
 </div>
 <script>
-let devices=[],currentStream=null,currentMode=null,codeReader=null;
+let devices=[],currentStream=null,currentMode=null,codeReader=null,scanTimer=null;
 
 async function listCameras(){
   await navigator.mediaDevices.getUserMedia({video:true}).then(s=>s.getTracks().forEach(t=>t.stop()));
@@ -46,53 +46,71 @@ async function listCameras(){
     sel.appendChild(opt);
   });
 }
+
 async function openCamera(index){
   stopCamera();
   const device=devices[index];
-  const constraints={video:{deviceId:{exact:device.deviceId}},audio:false};
+  const constraints={video:{deviceId:{exact:device.deviceId},width:{ideal:1280},height:{ideal:720}},audio:false};
   currentStream=await navigator.mediaDevices.getUserMedia(constraints);
   const v=document.getElementById('video');
   v.srcObject=currentStream;
   await v.play();
 }
+
 function stopCamera(){
+  clearInterval(scanTimer);
   if(codeReader) try{codeReader.reset();}catch(e){}
   if(currentStream){currentStream.getTracks().forEach(t=>t.stop());}
-  currentStream=null;
+  currentStream=null; currentMode=null;
 }
+
 function handleResult(text){
   document.getElementById('raw').value=text;
   document.getElementById('status').textContent='Okundu.';
 }
+
 async function startBarcode(){
   currentMode='barcode';
-  document.getElementById('status').textContent='Barkod taranıyor...';
+  document.getElementById('status').textContent='Kamera açılıyor...';
   await openCamera(document.getElementById('camera').value);
-  codeReader=new ZXingBrowser.BrowserMultiFormatReader();
-  codeReader.decodeFromVideoElementContinuously(document.getElementById('video'),(res,err)=>{
-    if(res) handleResult(res.getText());
-  });
+
+  // İlk kareyi bekle
+  const v=document.getElementById('video');
+  v.onloadeddata=()=>{
+    document.getElementById('status').textContent='Barkod taranıyor...';
+    codeReader=new ZXingBrowser.BrowserMultiFormatReader();
+    codeReader.decodeFromVideoElementContinuously(v,(res,err)=>{
+      if(res) handleResult(res.getText());
+    });
+  };
 }
+
 async function startMRZ(){
   currentMode='mrz';
-  document.getElementById('status').textContent='MRZ taranıyor...';
+  document.getElementById('status').textContent='Kamera açılıyor...';
   await openCamera(document.getElementById('camera').value);
+
   const v=document.getElementById('video');
   const c=document.createElement('canvas'),ctx=c.getContext('2d');
-  setInterval(async()=>{
-    if(currentMode!=='mrz'||!v.videoWidth) return;
-    c.width=v.videoWidth; c.height=v.videoHeight*0.3;
-    ctx.drawImage(v,0,v.videoHeight*0.7,v.videoWidth,v.videoHeight*0.3,0,0,c.width,c.height);
-    const {data:{text}}=await Tesseract.recognize(c,'eng',{tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<'});
-    if(text.trim().length>20) handleResult(text);
-  },2000);
+  v.onloadeddata=()=>{
+    document.getElementById('status').textContent='MRZ taranıyor...';
+    scanTimer=setInterval(async()=>{
+      if(currentMode!=='mrz'||!v.videoWidth) return;
+      c.width=v.videoWidth; c.height=v.videoHeight*0.3;
+      ctx.drawImage(v,0,v.videoHeight*0.7,v.videoWidth,v.videoHeight*0.3,0,0,c.width,c.height);
+      const {data:{text}}=await Tesseract.recognize(c,'eng',{tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<'});
+      if(text.trim().length>20) handleResult(text);
+    },2000);
+  };
 }
+
 document.getElementById('btnBarcode').onclick=startBarcode;
 document.getElementById('btnMRZ').onclick=startMRZ;
 document.getElementById('btnStop').onclick=()=>{stopCamera();document.getElementById('status').textContent='Durduruldu.';};
 document.getElementById('camera').onchange=()=>{
   if(currentMode) openCamera(document.getElementById('camera').value);
 };
+
 listCameras();
 </script>
 </body>
