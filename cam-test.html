@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kamera Teşhis (getUserMedia Testi)</title>
+<style>
+  :root { --bg:#0f1115; --card:#171923; --ink:#e8e8ea; --muted:#9aa0a6; --acc:#4f8cff; }
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+    font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+  .wrap{max-width:900px;margin:0 auto;padding:16px}
+  .card{background:var(--card);border-radius:16px;box-shadow:0 6px 30px rgb(0 0 0 /.25);
+    padding:16px;margin:12px 0}
+  h1{font-size:20px;margin:0 0 8px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  button{border:0;border-radius:10px;padding:10px 14px;cursor:pointer;background:var(--acc);color:#fff;font-weight:600}
+  button.secondary{background:#2a2e3a}
+  select,input[type="text"]{padding:10px;border-radius:10px;border:1px solid #2b2f3a;background:#0e1016;color:var(--ink)}
+  video{width:100%;max-height:60vh;background:#000;border:1px solid #2b2f3a;border-radius:12px}
+  .muted{color:var(--muted)}
+  pre{white-space:pre-wrap;background:#0e1016;border:1px solid #2b2f3a;padding:12px;border-radius:12px;max-height:40vh;overflow:auto}
+  .badge{display:inline-block;background:#202431;color:#cbd5e1;border-radius:999px;padding:3px 8px;font-size:12px;margin-right:6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>Kamera Teşhis</h1>
+    <div class="muted">Bu sayfa HTTPS, izin, cihaz ve tarayıcı desteğini kontrol eder; hangi kameraların var olduğunu ve neden açılmadığını **net** şekilde gösterir.</div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <button id="btnCheck">1) Ortamı Kontrol Et</button>
+      <button id="btnList" class="secondary">2) Kameraları Listele</button>
+      <select id="cams"></select>
+      <button id="btnStart" class="secondary">3) Seçili Kamerayı Aç</button>
+      <button id="btnStop" class="secondary">Durdur</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <span id="status" class="muted">Hazır.</span>
+    </div>
+    <video id="video" playsinline autoplay muted></video>
+  </div>
+
+  <div class="card">
+    <h1>Teşhis Çıktısı</h1>
+    <div id="badges"></div>
+    <pre id="log"></pre>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const log = (...args) => { const t=args.map(a=>typeof a==='object'?JSON.stringify(a,null,2):String(a)).join(' ');
+  $('#log').textContent += t+"\n"; console.log(...args); };
+const badge = (txt) => { const span=document.createElement('span'); span.className='badge'; span.textContent=txt; $('#badges').appendChild(span); };
+
+let stream = null;
+let devices = [];
+let selectedId = null;
+
+function setStatus(t){ $('#status').textContent = t; }
+
+async function stop(){
+  if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
+  $('#video').srcObject = null;
+  setStatus('Durduruldu.');
+}
+
+async function checkEnv(){
+  $('#badges').innerHTML = ''; $('#log').textContent = '';
+  badge(location.protocol === 'https:' ? 'HTTPS ✅' : 'HTTPS ❌');
+  badge('mediaDevices ' + (navigator.mediaDevices ? 'var ✅' : 'yok ❌'));
+  badge('getUserMedia ' + (navigator.mediaDevices && navigator.mediaDevices.getUserMedia ? 'var ✅' : 'yok ❌'));
+
+  log('UserAgent:', navigator.userAgent);
+  log('Location:', location.href);
+  if(location.protocol !== 'https:' && location.hostname !== 'localhost'){
+    log('UYARI: Güvenli bağlam değil. getUserMedia çalışmayabilir.');
+  }
+
+  if(navigator.permissions && navigator.permissions.query){
+    try{
+      const st = await navigator.permissions.query({name:'camera'});
+      badge('permission:' + st.state);
+      log('Permission state:', st.state);
+    }catch(e){ log('Permissions API hatası:', e.name, e.message); }
+  }else{
+    log('Permissions API yok.');
+  }
+
+  // izin diyaloğunu tetiklemek için kısa bir istek
+  try{
+    const tmp = await navigator.mediaDevices.getUserMedia({video:true,audio:false});
+    tmp.getTracks().forEach(t=>t.stop());
+    badge('izin-deneme ✅');
+    log('İzin denemesi başarılı (kısa).');
+  }catch(e){
+    badge('izin-deneme ❌');
+    log('İzin denemesi HATASI:', e.name, e.message);
+    setStatus('İzin verilmediyse adres çubuğundaki kilitten Kamera: İzin ver yapın, sonra sayfayı yenileyin.');
+  }
+}
+
+async function listCams(){
+  $('#cams').innerHTML = '';
+  try{
+    devices = (await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==='videoinput');
+    if(!devices.length){ log('Hiç video giriş aygıtı bulunamadı.'); setStatus('Kamera bulunamadı.'); return; }
+    // Arka kameraları öne al
+    devices.sort((a,b)=>{
+      const la=(a.label||'').toLowerCase(), lb=(b.label||'').toLowerCase();
+      const score = s => (/back|rear|environment/.test(s)?3:0) + (/front|user/.test(s)?-2:0) + (/ultra[-\s]?wide|wide/.test(s)?-1:0);
+      return score(lb) - score(la);
+    });
+    devices.forEach((d,i)=>{
+      const opt=document.createElement('option');
+      opt.value=d.deviceId;
+      opt.textContent=d.label||('Kamera '+(i+1));
+      $('#cams').appendChild(opt);
+    });
+    selectedId = $('#cams').value = devices[0].deviceId;
+    setStatus('Kameralar listelendi ('+devices.length+').');
+    log('Kameralar:', devices);
+  }catch(e){
+    log('enumerateDevices HATASI:', e.name, e.message);
+    setStatus('Kamera listelenemedi: '+e.message);
+  }
+}
+
+$('#cams').onchange = e => { selectedId = e.target.value; };
+
+async function start(){
+  await stop();
+  if(!selectedId){ setStatus('Önce kameraları listeleyin.'); return; }
+  const constraints = {
+    video: {
+      deviceId: { exact: selectedId },
+      facingMode: 'environment',
+      width: { ideal: 1920 }, height: { ideal: 1080 },
+      advanced: [{ focusMode:'continuous' }]
+    },
+    audio: false
+  };
+  setStatus('Kamera açılıyor…');
+  try{
+    stream = await navigator.mediaDevices.getUserMedia(constraints);
+  }catch(e1){
+    log('getUserMedia HATASI (öncelikli kısıtlar):', e1.name, e1.message);
+    // Daha sade kısıtlarla tekrar dene
+    try{
+      stream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: selectedId } }, audio:false });
+      log('Yedek kısıtlarla başarı.');
+    }catch(e2){
+      log('getUserMedia HATASI (yedek):', e2.name, e2.message);
+      setStatus('Kamera açılamadı: '+e2.name+' – '+e2.message);
+      return;
+    }
+  }
+  $('#video').srcObject = stream;
+  $('#video').playsInline = true;
+  await $('#video').play();
+
+  const track = stream.getVideoTracks()[0];
+  const caps = track.getCapabilities ? track.getCapabilities() : {};
+  const sets = track.getSettings ? track.getSettings() : {};
+  log('Track settings:', sets);
+  log('Track capabilities:', caps);
+  setStatus('Kamera açık: '+(sets.width||'?')+'x'+(sets.height||'?'));
+}
+
+window.onerror = (m, s, l, c, e) => { log('window.onerror:', m, s+':'+l, e && (e.stack||e)); };
+window.onunhandledrejection = ev => { log('unhandledrejection:', ev.reason && (ev.reason.stack||ev.reason)); };
+
+$('#btnCheck').onclick = checkEnv;
+$('#btnList').onclick = listCams;
+$('#btnStart').onclick = start;
+$('#btnStop').onclick = stop;
+
+// Otomatik küçük akış: bazı cihazlarda enumerate için önce izin gerekebilir
+(async ()=>{ try{ await checkEnv(); await listCams(); }catch(_){} })();
+</script>
+</body>
+</html>
