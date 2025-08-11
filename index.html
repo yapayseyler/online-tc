@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Online TC — Kamera + Barkod/MRZ (Vendor ZXing + Kayıt + TXT)</title>
+<title>Online TC — Hızlı MRZ (Satır Satır) + Vendor ZXing + Kayıt/TXT</title>
 <style>
   :root{--bg:#0f1115;--card:#171923;--ink:#e8e8ea;--muted:#9aa0a6;--acc:#4f8cff}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
@@ -30,13 +30,14 @@
   table{width:100%;border-collapse:collapse}
   th,td{padding:10px;border-bottom:1px solid #2b2f3a;font-size:14px;word-break:break-word}
   .muted{color:var(--muted)}
+  .pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#202431;color:#cbd5e1;font-size:12px}
 </style>
 </head>
 <body>
 <div class="wrap">
   <!-- ÜST KONTROLLER -->
   <div class="card">
-    <h1>Online TC — Barkod & MRZ Okuyucu</h1>
+    <h1>Online TC — Barkod & MRZ Okuyucu <span class="pill">Hızlandırılmış MRZ</span></h1>
     <div class="row" style="margin-top:6px">
       <button id="btnOpen">Kamerayı Aç</button>
       <button id="btnBarcode" class="secondary" disabled>Barkod Tara</button>
@@ -122,27 +123,31 @@ window.onerror = (m,s,l,c,e)=>{ log('window.onerror:', m, s+':'+l, e && (e.stack
 window.onunhandledrejection = ev=>{ log('unhandledrejection:', ev.reason && (ev.reason.stack||ev.reason)); };
 
 /* ==================== KÜTÜPHANELER ==================== */
-/* İSTEK ÜZERİNE: Barkod için SADECE VENDOR yolunu kullan. */
+/* İSTEK: Barkod sadece vendor. Birden fazla yerel isim deniyoruz. */
 async function loadZXingVendorOnly(){
   if(window.ZXingBrowser) return true;
-  const url = '/vendor/zxing-browser-0.1.4.min.js';  // yerel dosya
-  try{
-    await new Promise((resolve,reject)=>{
-      const s=document.createElement('script');
-      s.src=url; s.async=true;
-      s.onload=()=>resolve();
-      s.onerror=()=>reject(new Error('ZXing vendor yüklenemedi: '+url));
-      document.head.appendChild(s);
-    });
-    log('ZXing vendor yüklendi:', url);
-    return !!window.ZXingBrowser;
-  }catch(e){
-    log('ZXing yükleme hatası:', e.message);
-    return false;
+  const localCandidates = [
+    './zxing-browser-0.1.4.min.js',
+    './zxing-browser.min.js',
+    './zxing.min.js',
+    '/vendor/zxing-browser-0.1.4.min.js',
+    '/vendor/zxing-browser.min.js'
+  ];
+  for(const url of localCandidates){
+    try{
+      await new Promise((resolve,reject)=>{
+        const s=document.createElement('script'); s.src=url; s.async=true;
+        s.onload=()=>resolve(); s.onerror=()=>reject();
+        document.head.appendChild(s);
+      });
+      log('ZXing vendor yüklendi:', url);
+      if(window.ZXingBrowser) return true;
+    }catch(_){ log('ZXing vendor bulunamadı:', url); }
   }
+  return false;
 }
 
-/* MRZ için Tesseract: CDN→vendor fallback (isterseniz vendor’ı ekleyin) */
+/* MRZ için Tesseract: CDN→vendor fallback (worker reuse, hız için şart) */
 async function loadTesseract(){
   if(window.Tesseract) return true;
   const urls = [
@@ -154,15 +159,13 @@ async function loadTesseract(){
   for(const url of urls){
     try{
       await new Promise((resolve,reject)=>{
-        const s=document.createElement('script');
-        s.src=url; s.async=true;
-        s.onload=()=>resolve();
-        s.onerror=()=>reject(new Error('Tesseract hata:'+url));
+        const s=document.createElement('script'); s.src=url; s.async=true;
+        s.onload=()=>resolve(); s.onerror=()=>reject();
         document.head.appendChild(s);
       });
       log('Tesseract yüklendi:', url);
-      return !!window.Tesseract;
-    }catch(e){ log('Tesseract denemesi başarısız:', url); }
+      return true;
+    }catch(_){ log('Tesseract denemesi başarısız:', url); }
   }
   return false;
 }
@@ -171,6 +174,9 @@ async function loadTesseract(){
 let devices=[], deviceIndex=0, currentStream=null, currentMode=null; // 'barcode' | 'mrz'
 let scanTimer=null, codeReader=null;
 const storeKey = 'tcid_records_v1';
+
+/* Tesseract worker (tek işçi, tekrar kullan) */
+let mrzWorker=null, mrzBusy=false;
 
 /* ==================== Kayıt Deposu ==================== */
 function loadRecords(){ try{ return JSON.parse(localStorage.getItem(storeKey)||'[]'); }catch(_){ return []; } }
@@ -213,38 +219,33 @@ function extractTCKNAnywhere(text){
   return m ? m[1] : '';
 }
 
-/* İSTEK ÜZERİNE MRZ kuralları:
-   - 1. satır: EN SAĞDA TCKN (sağdan 11 hane, '<' temizlenerek)
-   - 2. satır: En soldaki 6 rakam YYMMDD (yıl/ay/gün)
+/* MRZ (kriterlerinize göre):
+   - 1. satır: en sağ 11 hane → TCKN
+   - 2. satır: en sol 6 rakam → YYMMDD (yıl/ay/gün)
    - 3. satır: SOYAD<<AD(AD2...)  */
 function parseMRZ_TR(text){
   if(!text) return null;
-  // Satırları temizle
   const lines = text.trim().split(/\n+/).map(s=>s.replace(/\s+/g,'').toUpperCase());
-  // MRZ genellikle son üç satırdır
   const MRZ = lines.slice(-3);
   if(MRZ.length < 2) return null;
   let l1 = MRZ[0]||'', l2 = MRZ[1]||'', l3 = MRZ[2]||'';
 
-  // --- 1) TCKN: ilk satırın en sağı ---
   let tckn = '';
   if(l1){
-    const r = l1.replace(/</g,'').match(/(\d{11})$/); // en sondaki 11 rakam
+    const r = l1.replace(/</g,'').match(/(\d{11})$/);
     if(r) tckn = r[1];
   }
 
-  // --- 2) Doğum tarihi: 2. satırın en sol 6 rakamı (YYMMDD) ---
   let dogum = '';
   if(l2){
     const six = (l2.match(/^\d{6}/) || [])[0];
     if(six){
       const yy = six.slice(0,2), mm = six.slice(2,4), dd = six.slice(4,6);
-      const year = +yy <= 24 ? ('20'+yy) : ('19'+yy); // yüzyıl tahmini
+      const year = +yy <= 24 ? ('20'+yy) : ('19'+yy);
       if(+mm>=1 && +mm<=12 && +dd>=1 && +dd<=31){ dogum = `${year}-${mm}-${dd}`; }
     }
   }
 
-  // --- 3) İsimler: SOYAD<<AD... ---
   let ad='', soyad='';
   if(l3 && l3.includes('<<')){
     const [s,g] = l3.split('<<');
@@ -255,8 +256,6 @@ function parseMRZ_TR(text){
   if(!(ad||soyad||dogum||tckn)) return null;
   return { ad, soyad, dogum, tckn };
 }
-
-/* Forma yaz */
 function fillForm(obj){
   if(!obj) return;
   $('#tckn').value = obj.tckn||'';
@@ -365,15 +364,14 @@ async function openCamera(){
   }
 }
 
-/* ==================== TARAYICI: ORTAK SONUÇ İŞLEME ==================== */
+/* ==================== Ortak Sonuç İşleme ==================== */
 function onScan(text, src, parsed){
   $('#raw').value = text||'';
   let obj = parsed || {};
   if(src==='barcode'){
     const t = extractTCKNAnywhere(text);
     if(t && !obj.tckn) obj.tckn = t;
-    // Nadir: barkod içinde MRZ blok metni varsa
-    const maybeMRZ = parseMRZ_TR(text);
+    const maybeMRZ = parseMRZ_TR(text); // barkodda MRZ varsa
     if(maybeMRZ){ obj = {...maybeMRZ, raw:text}; }
   }
   obj.raw = text;
@@ -381,11 +379,14 @@ function onScan(text, src, parsed){
   setStatus(src==='mrz' ? 'MRZ okundu.' : 'Barkod okundu.');
 }
 
-/* ==================== Barkod (ZXing — SADECE /vendor) ==================== */
+/* ==================== Barkod (ZXing — SADECE vendor) ==================== */
 async function startBarcode(){
   if(!currentStream){ const ok = await openCamera(); if(!ok) return; }
   const okLib = await loadZXingVendorOnly();
-  if(!okLib){ setStatus('Barkod kütüphanesi (vendor) yüklenemedi. /vendor/zxing-browser-0.1.4.min.js dosyasını sağlayın.'); return; }
+  if(!okLib){
+    setStatus('ZXing vendor bulunamadı. Aynı klasöre "zxing-browser-0.1.4.min.js" koyun (veya /vendor/).');
+    return;
+  }
   currentMode='barcode'; showScanline(true); setStatus('Barkod taranıyor…');
 
   const hints = new Map();
@@ -406,49 +407,151 @@ async function startBarcode(){
   }, 300);
 }
 
-/* ==================== MRZ (OCR) ==================== */
+/* ==================== MRZ (Hızlı: satır satır, tek worker, parametreli) ==================== */
+async function ensureMRZWorker(){
+  if(mrzWorker) return true;
+  const okLib = await loadTesseract();
+  if(!okLib){ setStatus('Tesseract yüklenemedi (CDN engelli ise /vendor/tesseract-4.0.2.min.js ekleyin).'); return false; }
+  try{
+    if(Tesseract.createWorker){
+      mrzWorker = await Tesseract.createWorker({ logger: null });
+      await mrzWorker.load();
+      await mrzWorker.loadLanguage('eng');
+      await mrzWorker.initialize('eng');
+      // Varsayılan: tek satır odaklı (psm 7), harf/rakam/<
+      await mrzWorker.setParameters({
+        tessedit_pageseg_mode: '7',
+        tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<'
+      });
+      log('MRZ worker hazır.');
+      return true;
+    }else{
+      // Eski API fallback (daha yavaş)
+      mrzWorker = 'legacy';
+      log('Tesseract legacy modda çalışacak.');
+      return true;
+    }
+  }catch(e){ log('MRZ worker hata:', e); return false; }
+}
+
+/* Basit görüntü işleme: gri + eşik */
+function binarize(ctx, w, h, thr=140){
+  const img=ctx.getImageData(0,0,w,h), d=img.data;
+  for(let i=0;i<d.length;i+=4){
+    const g=(d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114)|0;
+    const bw=g>thr?255:0; d[i]=d[i+1]=d[i+2]=bw;
+  }
+  ctx.putImageData(img,0,0);
+}
+
+/* Bir satırı OCR et (worker ile) */
+async function ocrWithWorker(canvas, params){
+  if(mrzWorker==='legacy'){
+    const { data:{ text } } = await Tesseract.recognize(canvas,'eng',params||{});
+    return text||'';
+  }
+  if(params) await mrzWorker.setParameters(params);
+  const { data:{ text } } = await mrzWorker.recognize(canvas);
+  return text||'';
+}
+
 async function startMRZ(){
   if(!currentStream){ const ok = await openCamera(); if(!ok) return; }
-  const okLib = await loadTesseract();
-  if(!okLib){ setStatus('Tesseract yüklenemedi. (CDN engelli ise /vendor/tesseract-4.0.2.min.js ekleyin)'); return; }
+  const okW = await ensureMRZWorker();
+  if(!okW) return;
 
   currentMode='mrz'; showScanline(true); setStatus('MRZ taranıyor…');
+
   const v=$('#video');
-  const c=document.createElement('canvas'), ctx=c.getContext('2d');
+  // ana band + 3 satır kırpımı (daha az piksel → daha hızlı)
+  const bandCanvas=document.createElement('canvas'), bctx=bandCanvas.getContext('2d');
+  const l1c=document.createElement('canvas'), l1ctx=l1c.getContext('2d');
+  const l2c=document.createElement('canvas'), l2ctx=l2c.getContext('2d');
+  const l3c=document.createElement('canvas'), l3ctx=l3c.getContext('2d');
 
-  setTimeout(()=>{
-    scanTimer=setInterval(async()=>{
-      if(currentMode!=='mrz'||!v.videoWidth) return;
+  mrzBusy=false;
+  let lastGood={l1:'',l2:'',l3:''};  // kısa hafıza (stabilizasyon için)
+
+  function prepLine(ctxDst, src, sx, sy, sw, sh, scale=2, thr=140){
+    ctxDst.canvas.width = Math.max(600, Math.floor(sw*scale)); // min genişlik → tesseract için netlik
+    ctxDst.canvas.height = Math.floor(sh*scale);
+    ctxDst.drawImage(src, sx, sy, sw, sh, 0, 0, ctxDst.canvas.width, ctxDst.canvas.height);
+    binarize(ctxDst, ctxDst.canvas.width, ctxDst.canvas.height, thr);
+  }
+
+  function stabilize(newTxt, oldTxt){
+    // küçük hataları tolere et: uzunluk yakınsa ve yeni boş değilse yeniyle güncelle
+    if(!newTxt) return oldTxt;
+    if(!oldTxt) return newTxt;
+    if(Math.abs(newTxt.length - oldTxt.length) <= 3) return newTxt;
+    return newTxt.length > oldTxt.length ? newTxt : oldTxt;
+  }
+
+  const tick = async ()=>{
+    if(currentMode!=='mrz' || mrzBusy || !v.videoWidth){ return; }
+    mrzBusy=true;
+    try{
       const vw=v.videoWidth, vh=v.videoHeight;
-      // MRZ en altta; alt ~%35 alan
-      const h=Math.floor(vh*0.35), y=vh-h, scale=2;
-      c.width=vw*scale; c.height=h*scale;
-      ctx.drawImage(v,0,y,vw,h, 0,0,c.width,c.height);
+      const bandH = Math.floor(vh*0.34), bandY = vh - bandH;  // alt ~%34
+      const scaleBand = 2;
 
-      // gri + basit eşik
-      const img=ctx.getImageData(0,0,c.width,c.height), d=img.data;
-      for(let i=0;i<d.length;i+=4){
-        const g=(d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114)|0;
-        const bw=g>140?255:0; d[i]=d[i+1]=d[i+2]=bw;
-      }
-      ctx.putImageData(img,0,0);
+      // band hazırlığı
+      bandCanvas.width = Math.floor(vw*scaleBand);
+      bandCanvas.height = Math.floor(bandH*scaleBand);
+      bctx.drawImage(v, 0, bandY, vw, bandH, 0,0, bandCanvas.width, bandCanvas.height);
+      binarize(bctx, bandCanvas.width, bandCanvas.height, 135);
 
-      try{
-        const {data:{text}} = await Tesseract.recognize(
-          c,'eng',{tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<', preserve_interword_spaces:'1'}
-        );
-        const cleaned = (text||'').toUpperCase().replace(/[^\dA-Z<\n]/g,'').trim();
-        if(cleaned.replace(/\s/g,'').length>20){
-          showScanline(false);
-          const mrz = parseMRZ_TR(cleaned);
-          if(mrz){ mrz.raw = cleaned; onScan(cleaned, 'mrz', mrz); }
-          else { setStatus('MRZ metni yakalandı ama ayrıştırılamadı. Kartı düzleyin/ışığı artırın.'); $('#raw').value = cleaned; }
+      // 3 satırı yaklaşık konumdan al (eşit böl)
+      const lineH = Math.floor(bandCanvas.height/3);
+      prepLine(l1ctx, bandCanvas, 0, 0*lineH, bandCanvas.width, lineH, 1.6, 135);
+      prepLine(l2ctx, bandCanvas, 0, 1*lineH, bandCanvas.width, lineH, 1.6, 135);
+      prepLine(l3ctx, bandCanvas, 0, 2*lineH, bandCanvas.width, lineH, 1.8, 135);
+
+      // Sırayla: l2 (doğum, sayısal hızlı) → l3 (isim) → l1 (tckn)
+      const l2 = (await ocrWithWorker(l2c, {
+        tessedit_pageseg_mode:'7',
+        tessedit_char_whitelist:'0123456789<',
+        classify_bln_numeric_mode:'1'
+      })).toUpperCase().replace(/[^\d<\n]/g,'').trim();
+
+      const l3 = (await ocrWithWorker(l3c, {
+        tessedit_pageseg_mode:'7',
+        tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ<'
+      })).toUpperCase().replace(/[^A-Z<\n]/g,'').trim();
+
+      const l1 = (await ocrWithWorker(l1c, {
+        tessedit_pageseg_mode:'7',
+        tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<'
+      })).toUpperCase().replace(/[^\dA-Z<\n]/g,'').trim();
+
+      // stabilize
+      lastGood.l1 = stabilize(l1, lastGood.l1);
+      lastGood.l2 = stabilize(l2, lastGood.l2);
+      lastGood.l3 = stabilize(l3, lastGood.l3);
+
+      const cleaned = [lastGood.l1,lastGood.l2,lastGood.l3].filter(Boolean).join('\n');
+      if(cleaned.replace(/\s/g,'').length>20){
+        showScanline(false);
+        const mrz = parseMRZ_TR(cleaned);
+        if(mrz){
+          mrz.raw = cleaned;
+          onScan(cleaned, 'mrz', mrz);
         }else{
-          setStatus('MRZ bekleniyor… Netlik/zoom deneyin.');
+          setStatus('MRZ yakalandı; ayrıştırılamadı (açı/ışık).');
+          $('#raw').value = cleaned;
         }
-      }catch(e){ log('OCR err:', e.name, e.message); setStatus('OCR hatası: '+e.message); }
-    }, 1500);
-  }, 300);
+      }else{
+        setStatus('MRZ bekleniyor… Kartı düz ve yakın tutun.');
+      }
+    }catch(e){
+      log('MRZ tick hata:', e.name || e, e.message||'');
+    }finally{
+      mrzBusy=false;
+    }
+  };
+
+  // Daha sık ama çakışmasız (busy bayrağı) → akıcı ve hızlı
+  scanTimer = setInterval(tick, 800);
 }
 
 /* ==================== UI Olayları ==================== */
