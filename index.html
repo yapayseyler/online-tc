@@ -3,11 +3,11 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Online TC — Sadece MRZ (Geliştirilmiş OCR)</title>
+<title>Online TC — MRZ (Fotoğraf ile Yüksek Kalite)</title>
 <style>
   :root{--bg:#0f1115;--card:#171923;--ink:#e8e8ea;--muted:#9aa0a6;--acc:#4f8cff}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
-  .wrap{max-width:960px;margin:0 auto;padding:14px}
+  .wrap{max-width:980px;margin:0 auto;padding:14px}
   .card{background:var(--card);border-radius:16px;box-shadow:0 6px 30px rgb(0 0 0/.25);padding:14px;margin:12px 0}
   h1{margin:0 0 8px;font-size:20px}
   .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
@@ -19,32 +19,37 @@
   input,textarea{width:100%;padding:10px;border-radius:10px;border:1px solid #2b2f3a;background:#0e1016;color:var(--ink)}
   textarea{min-height:90px}
   .video-wrap{position:relative;border:1px solid #2b2f3a;border-radius:12px;overflow:hidden}
-  video{width:100%;max-height:55vh;background:#000}
+  video{width:100%;max-height:50vh;background:#000}
   .overlay{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.35)}
   .overlay button{background:#000;border:1px solid #444}
-  .scanline{position:absolute;left:0;right:0;top:45%;height:2px;background:rgba(79,140,255,.9);box-shadow:0 0 14px rgba(79,140,255,.9);animation:scan 2.2s linear infinite;display:none}
-  @keyframes scan{0%{top:10%}50%{top:90%}100%{top:10%}}
-  pre{white-space:pre-wrap;background:#0e1016;border:1px solid #2b2f3a;padding:12px;border-radius:12px;max-height:32vh;overflow:auto}
+  .scanline{position:absolute;left:0;right:0;bottom:34%;height:2px;background:rgba(79,140,255,.9);box-shadow:0 0 14px rgba(79,140,255,.9)}
+  .hint{font-size:12px;color:#9aa0a6}
+  pre{white-space:pre-wrap;background:#0e1016;border:1px solid #2b2f3a;padding:12px;border-radius:12px;max-height:30vh;overflow:auto}
   .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
   @media (max-width:700px){.grid{grid-template-columns:1fr}}
   table{width:100%;border-collapse:collapse}
   th,td{padding:10px;border-bottom:1px solid #2b2f3a;font-size:14px;word-break:break-word}
   .muted{color:var(--muted)}
   .pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#202431;color:#cbd5e1;font-size:12px}
+  .img-prev{max-width:100%;border:1px dashed #394150;border-radius:10px}
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="card">
-    <h1>Online TC — Sadece MRZ <span class="pill">Geliştirilmiş OCR</span></h1>
+    <h1>Online TC — Sadece MRZ <span class="pill">Fotoğraf ile daha net</span></h1>
     <div class="row" style="margin-top:6px">
       <button id="btnOpen">Kamerayı Aç</button>
-      <button id="btnMRZ" class="secondary" disabled>MRZ Tara</button>
+      <button id="btnSnap" class="secondary" disabled>Fotoğraf Çek</button>
+      <input type="file" id="file" accept="image/*" style="display:none">
+      <button id="btnUpload" class="secondary">Fotoğraf Yükle</button>
+      <button id="btnMRZ" class="secondary" disabled>Seçili Fotoğraftan MRZ Tara</button>
       <button id="btnStop" class="secondary" disabled>Durdur</button>
       <button id="btnExport" class="secondary" disabled>TXT dışa aktar</button>
       <button id="btnClear" class="danger" disabled>Tüm kayıtları sil</button>
       <span id="status" style="color:#cbd5e1">Hazır.</span>
     </div>
+    <div class="hint">İpucu: “Fotoğraf Çek” görüntü kalitesini video karesine göre ciddi artırır. MRZ bandı kartın <b>altındaki son 1/3</b> bölgedir.</div>
   </div>
 
   <div class="card">
@@ -56,7 +61,10 @@
     <div class="video-wrap">
       <video id="video" autoplay playsinline muted></video>
       <div class="overlay" id="tapOverlay"><button id="btnTap">Videoyu Başlat</button></div>
-      <div class="scanline" id="scanline"></div>
+      <div class="scanline"></div>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <img id="preview" class="img-prev" alt="Seçili fotoğraf önizleme"/>
     </div>
   </div>
 
@@ -78,7 +86,7 @@
 
   <div class="card">
     <h1>Kayıtlar</h1>
-    <div class="muted" style="margin-bottom:6px">Veriler localStorage’da tutulur.</div>
+    <div class="muted" style="margin-bottom:6px">Veriler cihazınızda (localStorage) tutulur.</div>
     <table id="tbl"><thead><tr><th>#</th><th>TCKN</th><th>Ad</th><th>Soyad</th><th>Doğum</th><th>Sil</th></tr></thead><tbody></tbody></table>
   </div>
 
@@ -88,11 +96,10 @@
 </div>
 
 <script>
-/* ==================== Yardımcılar / Log ==================== */
+/* ==================== Yardımcı / Log ==================== */
 const $ = s=>document.querySelector(s);
 const log = (...a)=>{ const t=a.map(x=>x instanceof Error?(x.stack||x):typeof x==='object'?JSON.stringify(x):String(x)).join(' '); $('#log').textContent += t + "\n"; console.log(...a); };
 const setStatus = t => $('#status').textContent = t;
-const showScanline = b => $('#scanline').style.display = b ? 'block' : 'none';
 window.addEventListener('error', e=>{ log('window.error:', {msg:e.message,file:e.filename,line:e.lineno,col:e.colno}); });
 window.addEventListener('unhandledrejection', ev=>{ log('unhandledrejection:', ev.reason && (ev.reason.stack||ev.reason)); });
 
@@ -107,14 +114,10 @@ async function loadTesseract(){
 
 /* ==================== Global Durum ==================== */
 let devices=[], deviceIndex=0, currentStream=null, currentMode=null;
-let scanTimer=null;
-let mrzWorker=null, mrzBusy=false;
-const storeKey='tcid_records_v1';
+let mrzWorker=null;
+let selectedImage=null; // HTMLImageElement
 
-/* Stabilizasyon penceresi (çoğunluk oylaması) */
-const stab={N:8,l1:[],l2:[],l3:[]};
-function pushStab(k,v){ if(!v) return; const a=stab[k]; a.push(v); if(a.length>stab.N) a.shift(); }
-function majority(a){ const m=new Map(); a.forEach(s=>m.set(s,(m.get(s)||0)+1)); let b='',c=0; for(const [s,n] of m){ if(n>c || (n===c && s.length>b.length)){ b=s;c=n; } } return b; }
+const storeKey='tcid_records_v1';
 
 /* ==================== Depo ==================== */
 function loadRecords(){ try{ return JSON.parse(localStorage.getItem(storeKey)||'[]'); }catch(_){ return []; } }
@@ -128,15 +131,7 @@ function toggleExportButtons(){ const any=loadRecords().length>0; $('#btnExport'
 renderTable(); toggleExportButtons();
 
 /* ==================== Normalizasyon & Doğrulama ==================== */
-function normalizeDigits(s){
-  return (s||'')
-    .replace(/[OD]/g,'0')
-    .replace(/[IL]/g,'1')
-    .replace(/Z/g,'2')
-    .replace(/S/g,'5')
-    .replace(/B/g,'8')
-    .replace(/G/g,'6');
-}
+function normalizeDigits(s){ return (s||'').replace(/[OD]/g,'0').replace(/[IL]/g,'1').replace(/Z/g,'2').replace(/S/g,'5').replace(/B/g,'8').replace(/G/g,'6'); }
 function isValidTCKN(n){
   if(!/^\d{11}$/.test(n) || n[0]==='0') return false;
   const d=n.split('').map(Number), o=d[0]+d[2]+d[4]+d[6]+d[8], e=d[1]+d[3]+d[5]+d[7];
@@ -145,57 +140,51 @@ function isValidTCKN(n){
 }
 function yyyyFromYY(yy){ const y=+yy; return y<=24?2000+y:1900+y; }
 
-/* ==================== MRZ Ayrıştırıcı (’<’ kullanmadan) ==================== */
+/* ==================== MRZ Ayrıştırıcı ==================== */
+function scoreMRZ(l1,l2,l3){
+  let s=0;
+  if(l3 && /<</.test(l3)) s+=8;
+  if(l2 && /^\d{6}/.test(l2)) s+=6;
+  if(l1 && /\d{11}$/.test(l1.replace(/</g,''))) s+=6;
+  return s + (l1?.length||0)/10 + (l2?.length||0)/10 + (l3?.length||0)/10;
+}
 function parseMRZ_TR(text){
   if(!text) return null;
-  const L = text.trim().split(/\n+/).map(s=>s.toUpperCase());
-  const l1=(L[0]||'').replace(/\s+/g,' ');
-  const l2=(L[1]||'').replace(/\s+/g,' ');
-  const l3=(L[2]||'').replace(/\s+/g,' ');
+  const L=text.trim().split(/\n+/).map(s=>s.replace(/\s+/g,'').toUpperCase());
+  const l1=L[0]||'', l2=L[1]||'', l3=L[2]||'';
 
-  // 1) 1. satır: sağdaki 11 rakam → TCKN
+  // 1) TCKN: l1 en sağ 11
   let tckn='';{
-    const only=normalizeDigits(l1).replace(/\D/g,'');
-    const m=only.match(/(\d{11})$/);
-    if(m){ const cand=m[1]; if(isValidTCKN(cand)) tckn=cand; }
+    const only=normalizeDigits(l1.replace(/</g,'')).replace(/\D/g,'');
+    const m=only.match(/(\d{11})$/); if(m && isValidTCKN(m[1])) tckn=m[1];
   }
-
-  // 2) 2. satır: soldaki 6 rakam → YYMMDD
+  // 2) YYMMDD: l2 en sol 6
   let dogum='';{
-    const m=normalizeDigits(l2).match(/^\s*(\d{6})/);
-    if(m){ const p=m[1]; const yy=p.slice(0,2), mm=p.slice(2,4), dd=p.slice(4,6);
+    const six=(normalizeDigits(l2).match(/^\d{6}/)||[])[0];
+    if(six){ const yy=six.slice(0,2), mm=six.slice(2,4), dd=six.slice(4,6);
       const Y=yyyyFromYY(yy), M=+mm, D=+dd;
       if(M>=1&&M<=12&&D>=1&&D<=31) dogum=`${Y}-${mm}-${dd}`;
     }
   }
-
-  // 3) 3. satır: '<' yok → iki+ boşluk ayırıcı
-  let ad='', soyad='';{
-    const onlyLetters=l3.replace(/[^A-Z ]/g,' ').replace(/\s{2,}/g,'  ').trim();
-    let m = onlyLetters.match(/^([A-Z ]+?)\s{2,}([A-Z ]+)$/);
-    if(m){ soyad=m[1].trim().replace(/\s+/g,' '); ad=m[2].trim().replace(/\s+/g,' '); }
-    else{
-      const parts=onlyLetters.trim().split(/\s+/);
-      if(parts.length){ soyad=parts.shift(); ad=parts.join(' '); }
-    }
+  // 3) Soyad<<Ad
+  let ad='',soyad='';{
+    if(l3.includes('<<')){ const [s,g]=l3.split('<<'); soyad=s.replace(/</g,' ').trim().replace(/\s+/g,' '); ad=(g||'').replace(/</g,' ').trim().replace(/\s+/g,' '); }
   }
 
   if(!(tckn||dogum||ad||soyad)) return null;
-  return {tckn, dogum, ad, soyad};
+  return {tckn,dogum,ad,soyad,_score:scoreMRZ(l1,l2,l3)};
 }
 
 /* ==================== Kamera ==================== */
 function preferBack(list){
-  const score=d=>{ const L=(d.label||'').toLowerCase(); let s=0;
-    if(/back|rear|environment/.test(L)) s+=5;
-    if(/front|user/.test(L)) s-=4;
-    if(/camera\s*0.*back/.test(L)) s+=2; return s; };
+  const score=d=>{ const L=(d.label||'').toLowerCase(); let s=0; if(/back|rear|environment/.test(L)) s+=5; if(/front|user/.test(L)) s-=4; if(/camera\s*0.*back/.test(L)) s+=2; return s; };
   return list.slice().sort((a,b)=>score(b)-score(a));
 }
-async function listCameras(){ try{ const tmp=await navigator.mediaDevices.getUserMedia({video:true,audio:false}); tmp.getTracks().forEach(t=>t.stop()); }catch(_){ } let all=await navigator.mediaDevices.enumerateDevices(); all=all.filter(d=>d.kind==='videoinput'); devices=preferBack(all); const sel=$('#camera'); sel.innerHTML=''; devices.forEach((d,i)=>{ const o=document.createElement('option'); o.value=i; o.textContent=d.label||`Kamera ${i+1}`; sel.appendChild(o); }); deviceIndex=0; sel.value='0'; }
-function waitForFirstFrame(v){ return new Promise(r=>{ if(v.readyState>=2&&v.videoWidth>0) return r(); let done=false; const ok=()=>{ if(!done && v.videoWidth>0){ done=true; r(); } }; v.addEventListener('canplay',()=>ok(),{once:true}); if('requestVideoFrameCallback' in v){ v.requestVideoFrameCallback(()=>ok()); } else { const iv=setInterval(()=>{ if(done) return clearInterval(iv); if(v.videoWidth>0){ clearInterval(iv); ok(); } },50);} setTimeout(()=>ok(),3000); }); }
-async function tryPlay(v){ try{ v.muted=true; v.setAttribute('muted',''); v.setAttribute('playsinline',''); await v.play(); $('#tapOverlay').style.display='none'; return true; }catch(e){ $('#tapOverlay').style.display='flex'; return new Promise(res=>{ $('#btnTap').onclick=async()=>{ try{ await v.play(); $('#tapOverlay').style.display='none'; res(true); }catch{ res(false); } }; }); } }
-async function stopAll(){ showScanline(false); if(scanTimer){ clearInterval(scanTimer); scanTimer=null; } if(currentStream){ currentStream.getTracks().forEach(t=>t.stop()); } currentStream=null; currentMode=null; $('#btnMRZ').disabled=true; $('#btnStop').disabled=true; }
+async function listCameras(){ try{ const tmp=await navigator.mediaDevices.getUserMedia({video:true,audio:false}); tmp.getTracks().forEach(t=>t.stop()); }catch(_){ }
+  let all=await navigator.mediaDevices.enumerateDevices(); all=all.filter(d=>d.kind==='videoinput'); devices=preferBack(all);
+  const sel=$('#camera'); sel.innerHTML=''; devices.forEach((d,i)=>{ const o=document.createElement('option'); o.value=i; o.textContent=d.label||`Kamera ${i+1}`; sel.appendChild(o); });
+  deviceIndex=0; sel.value='0';
+}
 async function openCamera(){
   await stopAll();
   const dev=devices[deviceIndex]; if(!dev){ setStatus('Kamera bulunamadı.'); return false; }
@@ -206,34 +195,79 @@ async function openCamera(){
   try{
     const stream=await navigator.mediaDevices.getUserMedia(constraints);
     currentStream=stream; v.srcObject=stream;
-    const played=await tryPlay(v); if(!played){ setStatus('Videoyu başlatmak için dokunun.'); return false; }
-    await waitForFirstFrame(v);
+    try{ await v.play(); $('#tapOverlay').style.display='none'; }catch(_){ $('#tapOverlay').style.display='flex'; $('#btnTap').onclick=()=>v.play().then(()=>$('#tapOverlay').style.display='none'); }
     setStatus('Kamera açık.');
-    $('#btnMRZ').disabled=false; $('#btnStop').disabled=false;
+    $('#btnSnap').disabled=false; $('#btnMRZ').disabled= !selectedImage;
+    $('#btnStop').disabled=false;
     return true;
   }catch(e){ log('getUserMedia:', e.name, e.message); setStatus('Kamera açılamadı: '+e.message); return false; }
 }
+async function stopAll(){
+  if(currentStream){ currentStream.getTracks().forEach(t=>t.stop()); }
+  currentStream=null; $('#btnSnap').disabled=true; $('#btnStop').disabled=true;
+}
+
+/* ==================== Fotoğraf alma / yükleme ==================== */
+async function takePhoto(){
+  if(!currentStream) return null;
+  try{
+    const track=currentStream.getVideoTracks()[0];
+    if('ImageCapture' in window){
+      const ic=new ImageCapture(track);
+      if(ic.takePhoto){ const blob=await ic.takePhoto(); return await createImageFromBlob(blob); }
+      const bitmap=await ic.grabFrame(); // fallback
+      const c=document.createElement('canvas'); c.width=bitmap.width; c.height=bitmap.height;
+      const ctx=c.getContext('2d'); ctx.drawImage(bitmap,0,0);
+      return await createImageFromBlob(await new Promise(r=>c.toBlob(r,'image/jpeg',0.95)));
+    }
+  }catch(e){ log('takePhoto:',e); }
+  // En kötü ihtimal: video karesi
+  const v=$('#video');
+  const c=document.createElement('canvas'); c.width=v.videoWidth; c.height=v.videoHeight;
+  const ctx=c.getContext('2d'); ctx.drawImage(v,0,0);
+  const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',0.95));
+  return await createImageFromBlob(blob);
+}
+function createImageFromBlob(blob){
+  return new Promise(res=>{
+    const url=URL.createObjectURL(blob); const img=new Image(); img.onload=()=>{ URL.revokeObjectURL(url); res(img); }; img.src=url;
+  });
+}
+function showPreview(img){
+  selectedImage=img;
+  const prev=$('#preview');
+  const c=document.createElement('canvas'); const ctx=c.getContext('2d');
+  // daha küçük önizleme
+  const maxW=900, scale=Math.min(1, maxW/img.width);
+  c.width=Math.floor(img.width*scale); c.height=Math.floor(img.height*scale);
+  ctx.drawImage(img,0,0,c.width,c.height);
+  prev.src=c.toDataURL('image/jpeg',0.9);
+  $('#btnMRZ').disabled=false;
+}
 
 /* ==================== Görüntü işleme ==================== */
-/* 1) Keskinleştirme (hafif) */
+function cropMRZBandFromImage(img){
+  // Alt %34'ü al
+  const iw=img.width, ih=img.height, bandH=Math.floor(ih*0.34), bandY=ih - bandH;
+  const scale=2;
+  const c=document.createElement('canvas'), ctx=c.getContext('2d');
+  c.width=Math.floor(iw*scale); c.height=Math.floor(bandH*scale);
+  ctx.drawImage(img, 0, bandY, iw, bandH, 0,0, c.width, c.height);
+  return c;
+}
 function sharpen(ctx,w,h){
   const img=ctx.getImageData(0,0,w,h), d=img.data.slice();
   const out=ctx.getImageData(0,0,w,h), o=out.data;
   const off=[-w*4,0,w*4,-4,4];
   for(let i=0;i<o.length;i+=4){
     let sum=0,cnt=0;
-    for(const k of off){
-      const j=i+k; if(j>=0 && j<d.length){
-        const g=(d[j]*0.299 + d[j+1]*0.587 + d[j+2]*0.114)|0; sum+=g; cnt++;
-      }
-    }
-    const center=(d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114)|0;
-    let val=Math.min(255,Math.max(0, center*1.4 - (sum/cnt)*0.4));
+    for(const k of off){ const j=i+k; if(j>=0&&j<d.length){ const g=(d[j]*0.299+d[j+1]*0.587+d[j+2]*0.114)|0; sum+=g; cnt++; } }
+    const center=(d[i]*0.299+d[i+1]*0.587+d[i+2]*0.114)|0;
+    const val=Math.min(255,Math.max(0, center*1.4 - (sum/cnt)*0.4));
     o[i]=o[i+1]=o[i+2]=val; o[i+3]=255;
   }
   ctx.putImageData(out,0,0);
 }
-/* 2) Adaptif threshold (integral görüntü, mean-C) */
 function adaptiveMeanThreshold(ctx,w,h,block=25,C=10){
   const src=ctx.getImageData(0,0,w,h); const d=src.data;
   const gray=new Uint8ClampedArray(w*h);
@@ -262,7 +296,6 @@ function adaptiveMeanThreshold(ctx,w,h,block=25,C=10){
   }
   const dst=new ImageData(out,w,h); ctx.putImageData(dst,0,0);
 }
-/* 3) Küçük açı taraması: -2°..+2° (0.5° adım) → OCR skoru en iyi olanı seç */
 function rotateToCanvas(srcCanvas, angleDeg){
   const rad=angleDeg*Math.PI/180; const cw=srcCanvas.width, ch=srcCanvas.height;
   const tmp=document.createElement('canvas'); const ctx=tmp.getContext('2d');
@@ -275,124 +308,119 @@ function rotateToCanvas(srcCanvas, angleDeg){
 async function ensureMRZWorker(){
   if(mrzWorker) return true;
   const ok=await loadTesseract(); if(!ok){ setStatus('Tesseract yüklenemedi.'); return false; }
-  try{
-    if(Tesseract.createWorker){
-      // mrz/ocrb varsa onları dener, yoksa eng'e düşer
-      mrzWorker=await Tesseract.createWorker({logger:null});
-      await mrzWorker.load();
-
-      let lang='eng';
-      try{
-        // aynı origin’e mrz.traineddata/ocrb.traineddata koyarsan şu satırı "eng+mrz" / "eng+ocrb" yap
-        await mrzWorker.loadLanguage('eng');
-        // örnek: await mrzWorker.loadLanguage('eng+mrz');
-        // örnek: await mrzWorker.loadLanguage('eng+ocrb');
-      }catch(_){}
-      await mrzWorker.initialize(lang);
-      await mrzWorker.setParameters({
-        tessedit_pageseg_mode:'7',             // tek satır
-        tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789' // '<' tamamen kapalı
-      });
-      return true;
-    }else{ mrzWorker='legacy'; return true; }
-  }catch(e){ log('worker:', e); setStatus('MRZ worker hatası.'); return false; }
+  mrzWorker = Tesseract; // tek API kullanımı
+  return true;
 }
-async function ocrWithWorker(canvas, params){
-  if(mrzWorker==='legacy'){
-    const r=await Tesseract.recognize(canvas,'eng',params||{});
-    return {text:r?.data?.text||'', conf:r?.data?.confidence||0};
-  }
-  if(params) await mrzWorker.setParameters(params);
-  const r=await mrzWorker.recognize(canvas);
-  return {text:r?.data?.text||'', conf:r?.data?.confidence||0};
+async function ocrSingleLine(canvas, whitelist){
+  // psm 7 + whitelist ile tek satır OCR
+  const r = await Tesseract.recognize(canvas,'eng', {
+    tessedit_pageseg_mode: '7',
+    tessedit_char_whitelist: whitelist
+  });
+  const text = (r?.data?.text||'').toUpperCase().replace(/[^\dA-Z<\n ]/g,'').trim();
+  const conf = r?.data?.confidence || 0;
+  return {text, conf};
 }
 
-/* ==================== MRZ Tarama (yalnız MRZ bandı) ==================== */
-async function startMRZ(){
-  if(!currentStream){ const ok=await openCamera(); if(!ok) return; }
-  const okW=await ensureMRZWorker(); if(!okW) return;
+/* ==================== Fotoğraftan MRZ Oku ==================== */
+async function runMRZFromSelected(){
+  if(!selectedImage){ alert('Önce fotoğraf seç veya çek.'); return; }
+  setStatus('MRZ işleniyor (fotoğraf)…');
 
-  currentMode='mrz'; showScanline(true); setStatus('MRZ taranıyor…');
-  const v=$('#video');
-  const band=document.createElement('canvas'), bctx=band.getContext('2d');
-  stab.l1=[]; stab.l2=[]; stab.l3=[]; mrzBusy=false;
+  // 1) bandı kırp
+  const band = cropMRZBandFromImage(selectedImage);
+  const bctx = band.getContext('2d');
+  sharpen(bctx, band.width, band.height);
+  adaptiveMeanThreshold(bctx, band.width, band.height, 25, 10);
 
-  // varyant üretici: keskinleştir + adaptif threshold + küçük açı tarama
-  function buildVariants(srcCtx, sx, sy, sw, sh, scale){
-    const base=document.createElement('canvas'); const ctx=base.getContext('2d');
-    base.width=Math.max(800, Math.floor(sw*scale));
-    base.height=Math.floor(sh*scale);
-    ctx.drawImage(srcCtx.canvas, sx, sy, sw, sh, 0, 0, base.width, base.height);
-    sharpen(ctx, base.width, base.height);
-    adaptiveMeanThreshold(ctx, base.width, base.height, 25, 10);
+  // 2) -2°..+2° küçük açı aralığı → en iyi skor
+  const angles=[-2,-1, -0.5, 0, 0.5, 1, 2];
+  let bestText='', bestScore=-1;
 
-    const angles=[-2,-1.5,-1, -0.5, 0, 0.5, 1, 1.5, 2];
-    return angles.map(a=>rotateToCanvas(base,a));
-  }
+  for(const a of angles){
+    const rot = rotateToCanvas(band, a);
+    // 3 satırı kabaca eşit böl
+    const h = Math.floor(rot.height/3);
 
-  async function bestText(cans){
-    let best='', q=-1;
-    for(const c of cans){
-      const {text, conf}=await ocrWithWorker(c);
-      const t=(text||'').toUpperCase()
-        .replace(/[^A-Z0-9\n ]/g,'')     // sadece A-Z 0-9 ve boşluk
-        .replace(/[ ]{2,}/g,' ')         // çoklu boşluk sadeleştir
-        .trim();
-      if(!t) continue;
-      const score=(conf||0) + t.length*1.5;
-      if(score>q){ q=score; best=t; }
+    // her satır için 2 geçiş: (A-Z0-9<) ve (A-Z0-9)
+    async function getLine(y, scale=1.9){
+      const c=document.createElement('canvas'), ctx=c.getContext('2d');
+      c.width=Math.max(900, rot.width); c.height=Math.floor(h*scale);
+      ctx.drawImage(rot, 0, y, rot.width, h, 0, 0, c.width, c.height);
+
+      const pass1 = await ocrSingleLine(c, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<');
+      const pass2 = await ocrSingleLine(c, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789');
+      // basit seçim: daha uzun + daha yüksek conf
+      const s1 = (pass1.conf||0) + pass1.text.length*1.5;
+      const s2 = (pass2.conf||0) + pass2.text.length*1.5;
+      return s2>=s1 ? pass2.text : pass1.text;
     }
-    return best;
+
+    const l1 = await getLine(0);
+    const l2 = await getLine(h);
+    const l3 = await getLine(2*h, 2.0);
+
+    const candidate = [l1,l2,l3].join('\n');
+    const parsed = parseMRZ_TR(candidate);
+    const score = (parsed? parsed._score:0) + candidate.replace(/\s/g,'').length/10;
+
+    if(score > bestScore){
+      bestScore = score;
+      bestText = candidate;
+    }
   }
 
-  const tick=async()=>{
-    if(currentMode!=='mrz'||mrzBusy||!v.videoWidth) return;
-    mrzBusy=true;
-    try{
-      const vw=v.videoWidth, vh=v.videoHeight, bandH=Math.floor(vh*0.34), bandY=vh-bandH, scale=2;
-      band.width=Math.floor(vw*scale); band.height=Math.floor(bandH*scale);
-      bctx.drawImage(v,0,bandY,vw,bandH,0,0,band.width,band.height);
+  if(!bestText){ setStatus('MRZ bulunamadı. Işığı artırıp tekrar deneyin.'); return; }
 
-      // 3 satırı kabaca eşit böl
-      const h=Math.floor(band.height/3);
-      const var1=buildVariants(bctx,0,0*h,band.width,h,1.9);
-      const var2=buildVariants(bctx,0,1*h,band.width,h,1.9);
-      const var3=buildVariants(bctx,0,2*h,band.width,h,2.0);
-
-      const l2=await bestText(var2);
-      const l3=await bestText(var3);
-      const l1=await bestText(var1);
-
-      pushStab('l1',l1); pushStab('l2',l2); pushStab('l3',l3);
-      const s1=majority(stab.l1), s2=majority(stab.l2), s3=majority(stab.l3);
-      const cleaned=[s1,s2,s3].filter(Boolean).join('\n');
-
-      if(cleaned.replace(/\s/g,'').length>20){
-        const parsed=parseMRZ_TR(cleaned);
-        if(parsed){ parsed.raw=cleaned; onScan(cleaned,'mrz',parsed); showScanline(false); }
-        else{ setStatus('MRZ yakalandı; ayrıştırılamadı.'); $('#raw').value=cleaned; }
-      }else{
-        setStatus('MRZ bekleniyor… Kartı alt banda hizalayın, ışığı artırın.');
-      }
-    }catch(e){ log('MRZ tick:',e); } finally{ mrzBusy=false; }
-  };
-  scanTimer=setInterval(tick,550);
+  $('#raw').value = bestText;
+  const mrz = parseMRZ_TR(bestText);
+  if(mrz){
+    fillForm(mrz);
+    setStatus('MRZ okundu (fotoğraf).');
+  }else{
+    setStatus('Metin bulundu ama ayrıştırılamadı — açı/ışık.'); 
+  }
 }
 
-/* ==================== Ortak Sonuç ==================== */
+/* ==================== Ortak Sonuç / UI ==================== */
 function fillForm(o){ if(!o) return; $('#tckn').value=o.tckn||''; $('#ad').value=o.ad||''; $('#soyad').value=o.soyad||''; $('#dogum').value=o.dogum||''; if(o.raw) $('#raw').value=o.raw; }
-function onScan(text, _src, parsed){ $('#raw').value=text||''; const obj=parsed||{}; obj.raw=text; fillForm(obj); setStatus('MRZ okundu.'); }
 
-/* ==================== UI ==================== */
 $('#btnOpen').addEventListener('click', async ()=>{ try{ await listCameras(); await openCamera(); }catch(e){ log('btnOpen:',e); } });
 $('#btnStop').addEventListener('click', async ()=>{ await stopAll(); setStatus('Durduruldu.'); });
-$('#btnMRZ').addEventListener('click', async ()=>{ try{ await startMRZ(); }catch(e){ log('mrz:',e); } });
-$('#camera').addEventListener('change', async ()=>{ deviceIndex=+$('#camera').value; if(currentStream){ await openCamera(); } });
 
-/* Kayıt / dışa aktarım */
-$('#btnSave').addEventListener('click', ()=>{ const rec={ tckn:$('#tckn').value.trim(), ad:$('#ad').value.trim(), soyad:$('#soyad').value.trim(), dogum:$('#dogum').value.trim(), raw:$('#raw').value.trim(), ts:new Date().toISOString() }; const l=loadRecords(); l.push(rec); saveRecords(l); setStatus('Kayıt eklendi.'); });
-$('#btnClear').addEventListener('click', ()=>{ if(confirm('Tüm kayıtlar silinsin mi?')) saveRecords([]); });
-$('#btnExport').addEventListener('click', ()=>{ const l=loadRecords(); if(!l.length){ alert('Dışa aktarılacak kayıt yok.'); return; } const header='TCKN;AD;SOYAD;DOGUM_TARIHI;RAW\n'; const lines=l.map(r=>[r.tckn||'',r.ad||'',r.soyad||'',r.dogum||'',(r.raw||'').replace(/\n/g,' ')].join(';')); const blob=new Blob(['\ufeff'+header+lines.join('\n')],{type:'text/plain;charset=utf-8'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='kimlik_kayitlari.txt'; document.body.appendChild(a); a.click(); a.remove(); setStatus('TXT dışa aktarıldı.'); });
+$('#btnSnap').addEventListener('click', async ()=>{
+  try{ const img = await takePhoto(); if(img){ showPreview(img); setStatus('Fotoğraf alındı. MRZ Tara’ya basın.'); } }
+  catch(e){ log('snap:',e); setStatus('Fotoğraf alınamadı.'); }
+});
+
+$('#btnUpload').addEventListener('click', ()=>$('#file').click());
+$('#file').addEventListener('change', async ev=>{
+  const f=ev.target.files[0]; if(!f) return;
+  const img = await createImageFromBlob(f);
+  showPreview(img);
+  setStatus('Fotoğraf seçildi. MRZ Tara’ya basın.');
+});
+
+$('#btnMRZ').addEventListener('click', async ()=>{
+  try{
+    const ok = await ensureMRZWorker(); if(!ok) return;
+    await runMRZFromSelected();
+  }catch(e){ log('mrz:',e); setStatus('MRZ okunamadı: '+(e.message||e)); }
+});
+
+$('#btnSave').addEventListener('click', ()=>{
+  const rec={ tckn:$('#tckn').value.trim(), ad:$('#ad').value.trim(), soyad:$('#soyad').value.trim(), dogum:$('#dogum').value.trim(), raw:$('#raw').value.trim(), ts:new Date().toISOString() };
+  const l=loadRecords(); l.push(rec); saveRecords(l); setStatus('Kayıt eklendi.');
+});
+$('#btnClear').addEventListener('click', ()=>{ if(confirm('Tüm kayıtlar silinsin mi?')) saveRecords([]); toggleExportButtons(); });
+$('#btnExport').addEventListener('click', ()=>{
+  const l=loadRecords(); if(!l.length){ alert('Dışa aktarılacak kayıt yok.'); return; }
+  const header='TCKN;AD;SOYAD;DOGUM_TARIHI;RAW\n';
+  const lines=l.map(r=>[r.tckn||'',r.ad||'',r.soyad||'',r.dogum||'',(r.raw||'').replace(/\n/g,' ')].join(';'));
+  const blob=new Blob(['\ufeff'+header+lines.join('\n')],{type:'text/plain;charset=utf-8'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='kimlik_kayitlari.txt'; document.body.appendChild(a); a.click(); a.remove();
+  setStatus('TXT dışa aktarıldı.');
+});
 
 /* İlk yükleme */
 (async()=>{ try{ await listCameras(); }catch(e){ log('listeleme:',e); } })();
