@@ -107,37 +107,86 @@ const setStatus = t => $('#status').textContent = t;
 window.addEventListener('error', e=>{ log('window.error:', {msg:e.message,file:e.filename,line:e.lineno,col:e.colno}); });
 window.addEventListener('unhandledrejection', ev=>{ log('unhandledrejection:', ev.reason && (ev.reason.stack||ev.reason)); });
 
-/* ==================== Tesseract yükleyici (Vendor öncelikli) ==================== */
-/* Not: Projeye şu dosyaları koyarsan hiç CDN’e çıkmadan çalışır:
+/* ==================== Tesseract yükleyici ==================== */
+/* Koyabileceğin yerel dosya yapısı (önerilen):
    /vendor/tesseract/
       tesseract.min.js
       worker.min.js
       tesseract-core-simd.wasm.js
       tesseract-core.wasm.js
-      /lang
+      /lang/eng.traineddata.gz  (opsiyonel; genelde CDN'den iner)
 */
-function loadScript(u){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=u;s.async=true;s.onload=()=>res();s.onerror=()=>rej(new Error('yüklenemedi:'+u));document.head.appendChild(s);});}
-function guessTessBaseFromScript(){
-  const scr=[...document.scripts].map(x=>x.src||'');
-  const hit=scr.find(x=>/tesseract(\.min)?\.js$/i.test(x));
-  if(hit){ try{ const u=new URL(hit, location.href); return u.pathname.replace(/[^/]+$/,''); }catch(_){ } }
-  return '/vendor/tesseract/'; // varsayılan
+const TESS_CANDIDATES = [
+  { base:'/vendor/tesseract/', script:'/vendor/tesseract/tesseract.min.js' },
+  { base:'./',                script:'./tesseract.min.js' },
+  { base:'https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/',
+    script:'https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js' }
+];
+
+function absolute(u){ try{ return new URL(u, location.href).href; }catch(_){ return u; } }
+
+async function exists(url){
+  try{
+    const r = await fetch(url, { method:'HEAD', cache:'no-store' });
+    return r.ok;
+  }catch(_){ return false; }
 }
-async function loadTesseract(){
-  if(window.Tesseract) return true;
-  const cand=[
-    './tesseract.min.js',
-    './tesseract.js',
-    '/vendor/tesseract/tesseract.min.js',
-    '/vendor/tesseract/tesseract.js'
-  ];
-  for(const u of cand){
-    try{ await loadScript(u); log('tesseract yüklendi (vendor):',u); return true; }
-    catch(e){ log('tesseract vendor denemesi:',u,e.message); }
+
+async function pickTesseractBase(){
+  for(const c of TESS_CANDIDATES){
+    try{
+      // script'i yüklemeden önce worker var mı bak
+      const okWorker = await exists(absolute(c.base + 'worker.min.js'));
+      const okCore   = await exists(absolute(c.base + 'tesseract-core.wasm.js'));
+      const okCoreS  = await exists(absolute(c.base + 'tesseract-core-simd.wasm.js'));
+      if(!okWorker || !okCore || !okCoreS){
+        // vendor eksikse, CDN'e geç
+        if(c.base.startsWith('http')) {
+          // CDN'de HEAD bazı ağlarda engelli olabilir; yine de deneyeceğiz
+          log('tesseract candidate (CDN) denenecek:', c.base);
+        } else {
+          log('tesseract candidate eksik dosya:', c.base, {okWorker,okCore,okCoreS});
+          // yerel aday eksikse bu adayı atla
+          if(!(okWorker && (okCore || okCoreS))) continue;
+        }
+      }
+      await loadScript(c.script);
+      log('tesseract script yüklendi:', c.script);
+      return c.base;
+    }catch(e){
+      log('tesseract script yüklenemedi:', c.script, e.message);
+    }
   }
-  const cdn='https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js';
-  try{ await loadScript(cdn); log('tesseract yüklendi (CDN):',cdn); return true; }
-  catch(e){ log('tesseract CDN başarısız:', e.message); return false; }
+  return null;
+}
+
+function loadScript(u){
+  return new Promise((res,rej)=>{
+    const s=document.createElement('script');
+    s.src=u; s.async=true; s.crossOrigin="anonymous";
+    s.onload=()=>res();
+    s.onerror=()=>rej(new Error('yüklenemedi:'+u));
+    document.head.appendChild(s);
+  });
+}
+
+let _tessBase = null;
+async function ensureTesseractReady(){
+  if(window.Tesseract && _tessBase) return true;
+  _tessBase = await pickTesseractBase();
+  if(!_tessBase){ setStatus('Tesseract tabanı bulunamadı. /vendor/tesseract/ altına dosyaları koyun veya internet erişimi verin.'); return false; }
+  if(!window.Tesseract){ setStatus('Tesseract kütüphanesi yüklenemedi.'); return false; }
+  return true;
+}
+
+function tessPaths(){
+  const base = _tessBase || '/vendor/tesseract/';
+  return {
+    workerPath: base + 'worker.min.js',
+    corePathSIMD: base + 'tesseract-core-simd.wasm.js',
+    corePath: base + 'tesseract-core.wasm.js',
+    langPath: base + 'lang'
+  };
 }
 
 /* ==================== Global Durum ==================== */
@@ -380,18 +429,9 @@ function rotateToCanvas(srcCanvas, angleDeg){
 }
 
 /* ==================== MRZ OCR ==================== */
-function tessPaths(){
-  const base = guessTessBaseFromScript();
-  return {
-    workerPath: base + 'worker.min.js',
-    corePathSIMD: base + 'tesseract-core-simd.wasm.js',
-    corePath: base + 'tesseract-core.wasm.js',
-    langPath: base + 'lang'
-  };
-}
 async function ocrSingleLine(canvas, whitelist){
+  if(!(await ensureTesseractReady())) return {text:'',conf:0};
   const p = tessPaths();
-  // Önce SIMD çekirdeği, olmazsa normal çekirdek
   try{
     const r = await Tesseract.recognize(canvas,'eng', {
       tessedit_pageseg_mode: '7',
@@ -404,7 +444,7 @@ async function ocrSingleLine(canvas, whitelist){
     const conf = r?.data?.confidence || 0;
     return {text, conf};
   }catch(e1){
-    log('SIMD çekirdek olmadı, normal çekirdek deneniyor…');
+    log('SIMD çekirdek olmadı, normal çekirdek deneniyor…', e1.message);
     const r = await Tesseract.recognize(canvas,'eng', {
       tessedit_pageseg_mode: '7',
       tessedit_char_whitelist: whitelist,
@@ -421,8 +461,13 @@ async function ocrSingleLine(canvas, whitelist){
 /* Fotoğraftan MRZ Oku */
 async function runMRZFromSelected(){
   if(!selectedImage){ alert('Önce fotoğraf seç veya çek.'); return; }
-  const ok = await loadTesseract();
-  if(!ok){ setStatus('Tesseract yüklenemedi. Vendor’a koyun: /vendor/tesseract/tesseract.min.js'); return; }
+  if(location.protocol!=='https:' && location.hostname!=='localhost'){
+    alert('Web Worker ve kamera için sayfayı HTTPS üzerinde açın (localhost hariç).');
+  }
+  if(!(await ensureTesseractReady())){
+    setStatus('Tesseract yüklenemedi. /vendor/tesseract/ altına dosyaları koyun veya internet erişimi verin.');
+    return;
+  }
   setStatus('MRZ işleniyor (fotoğraf)…');
 
   const band = cropMRZBandFromImage(selectedImage);
@@ -465,7 +510,6 @@ async function runMRZFromSelected(){
   }
 
   if(!bestText){ setStatus('MRZ bulunamadı. Işığı artırıp tekrar deneyin.'); return; }
-
   $('#raw').value = bestText;
   const mrz = parseMRZ_TR(bestText);
   if(mrz){
