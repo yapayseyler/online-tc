@@ -2,36 +2,38 @@
 <html lang="tr">
 <head>
   <meta charset="utf-8" />
-  <title>MRZ Okuyucu (Ön/Arka Kamera Seçimli)</title>
+  <title>MRZ Okuyucu — Normal Arka Kamera (Balık gözü yok)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
     body { margin: 0; background:#0b0f14; color:#e6eef8; }
-    header { padding:16px 20px; border-bottom:1px solid #1f2733; display:flex; justify-content:space-between; align-items:center;}
-    header h1 { font-size:18px; margin:0; }
-    main { display:grid; grid-template-columns: 1.3fr 0.7fr; gap:16px; padding:16px; }
+    header { padding:14px 16px; border-bottom:1px solid #1f2733; display:flex; gap:12px; align-items:center; flex-wrap:wrap;}
+    header h1 { font-size:16px; margin:0; color:#cfe1ff; }
+    .ctrls { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    select, button, label { font-size:14px; }
+    select, button { border:1px solid #2a3547; background:#162032; color:#e6eef8; padding:8px 12px; border-radius:10px; }
+    button { cursor:pointer; font-weight:600; }
+    button:disabled{opacity:.6; cursor:not-allowed;}
+    label { color:#9bb0c9; user-select:none; }
+    main { display:grid; grid-template-columns: 1.2fr 0.8fr; gap:16px; padding:16px; }
     .panel { background:#0f1520; border:1px solid #1d2633; border-radius:12px; overflow:hidden; }
     .panel h2 { font-size:14px; margin:0; padding:10px 12px; border-bottom:1px solid #1d2633; color:#b9c8da;}
     .content { padding:12px; }
-    #video { width:100%; border-radius:8px; background:#000; transform: scaleX(-1); }
-    /* Ön kamera ayna etkisi için scaleX(-1). Arka kameraya geçtiğinde JS ile kaldırıyoruz. */
-    #overlay { position:absolute; inset:0; pointer-events:none; }
-    .stack { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-    button { border:1px solid #2a3547; background:#162032; color:#e6eef8; padding:10px 14px; border-radius:10px; cursor:pointer; font-weight:600; }
-    button:disabled{opacity:.6; cursor:wait;}
-    .hint { font-size:12px; color:#9bb0c9; line-height:1.5; }
-    pre { white-space:pre-wrap; background:#0c111b; padding:10px; border-radius:8px; border:1px solid #1d2633; }
-    .two { display:grid; grid-template-columns: 1fr 1fr; gap:8px; }
-    .kv { display:grid; grid-template-columns: 140px 1fr; gap:6px; font-size:14px; padding:6px 8px; border-bottom:1px dashed #223049; }
-    .kv b { color:#cfe1ff; }
-    footer { padding:10px 16px; font-size:12px; color:#8fa8c7; border-top:1px solid #1f2733; }
+    #video { width:100%; border-radius:8px; background:#000; }
     .frame { position:relative; }
     .mrz-window {
       position:absolute; left:5%; right:5%; height:26%;
       bottom:8%; border:2px dashed #58a6ff88; border-radius:8px; box-shadow:0 0 0 200vmax #0000 inset;
     }
-    .grid { display:grid; gap:8px; }
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    .hint { font-size:12px; color:#9bb0c9; line-height:1.5; }
+    pre { white-space:pre-wrap; background:#0c111b; padding:10px; border-radius:8px; border:1px solid #1d2633; }
+    .kv { display:grid; grid-template-columns: 140px 1fr; gap:6px; font-size:14px; padding:6px 8px; border-bottom:1px dashed #223049; }
+    .kv b { color:#cfe1ff; }
+    .grid { display:grid; gap:10px; }
+    footer { padding:10px 16px; font-size:12px; color:#8fa8c7; border-top:1px solid #1f2733; }
+    /* Autoplay engellenirse üzerine tıklatmak için */
+    #tapOverlay { display:none; position:absolute; inset:0; align-items:center; justify-content:center; background: #0006; border-radius:8px; }
+    #tapOverlay button{ background:#0d6efd; border:0; padding:10px 14px; border-radius:10px; color:#fff; font-weight:700; }
   </style>
   <!-- Tesseract.js (OCR) -->
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
@@ -43,11 +45,15 @@
 </head>
 <body>
   <header>
-    <h1>MRZ Okuyucu — HTML + Tesseract.js</h1>
-    <div class="stack">
-      <button id="startBtn">Kamerayı Aç (Ön)</button>
-      <button id="switchBtn" disabled>Ön ⇄ Arka</button>
-      <button id="snapBtn" disabled>Tara</button>
+    <h1>MRZ Okuyucu — Normal Arka Kamera</h1>
+    <div class="ctrls">
+      <select id="camera" title="Kamera seç">
+        <option>— kameralar yükleniyor —</option>
+      </select>
+      <label><input type="checkbox" id="lowres" /> Düşük çözünürlük (1280×720)</label>
+      <button id="btnOpen">Kamerayı Aç</button>
+      <button id="btnStop" disabled>Kapat</button>
+      <button id="btnSnap" disabled>Tara</button>
     </div>
   </header>
 
@@ -57,21 +63,13 @@
       <div class="content grid">
         <div class="frame">
           <video id="video" autoplay playsinline></video>
+          <div id="tapOverlay"><button id="btnTap">Videoyu Başlat</button></div>
           <div class="mrz-window" title="MRZ penceresi"></div>
         </div>
-        <div class="two">
-          <div>
-            <div class="hint">
-              • MRZ, belgenin altındaki 2–3 satırlık makine okunur alandır.<br/>
-              • MRZ penceresini o alana denk getirecek şekilde tut.<br/>
-              • Işık iyi olmalı; parlamadan kaçın.
-            </div>
-          </div>
-          <div>
-            <div class="hint">
-              İpucu: Sonuçlar zayıfsa belgeyi düz tut, kameraya paralel hizala ve tekrar tara.
-            </div>
-          </div>
+        <div class="hint">
+          • MRZ, belgenin altındaki 2–3 satırlık makine okunur alandır. Pencereyi MRZ hizasına getir.<br/>
+          • Ultra-wide veya balık gözü bozar — bu sayfa **normal arka kamera**yı otomatik seçer. Gerekirse menüden değiştir.<br/>
+          • Işık iyi olmalı; parlamadan kaçın.
         </div>
         <canvas id="canvas" style="display:none;"></canvas>
       </div>
@@ -90,104 +88,158 @@
   </main>
 
   <footer>
-    Bu örnek, tarayıcıda çalışan açık kaynak Tesseract.js ile MRZ ayrıştırıcıyı kullanır (kamera erişimi gerekli).
+    Tamamen tarayıcıda çalışır. Normal arka kamera öncelikli seçilir; MRZ OCR için Tesseract.js ve ayrıştırma için <code>mrz</code> kütüphanesi kullanılır.
   </footer>
 
 <script>
 (function(){
-  const startBtn = document.getElementById('startBtn');
-  const switchBtn= document.getElementById('switchBtn');
-  const snapBtn  = document.getElementById('snapBtn');
-  const video    = document.getElementById('video');
-  const canvas   = document.getElementById('canvas');
-  const statusEl = document.getElementById('status');
-  const rawText  = document.getElementById('rawText');
-  const fieldsEl = document.getElementById('fields');
+  // Kısa yardımcılar
+  const $ = (q)=>document.querySelector(q);
 
-  let stream = null;
-  // Varsayılan: ÖN (user). İstersen butonla arka (environment) yapılır.
-  let facing = 'user';
+  const video = $('#video');
+  const canvas= $('#canvas');
+  const statusEl = $('#status');
+  const rawText = $('#rawText');
+  const fieldsEl = $('#fields');
 
-  function setStatus(msg){ statusEl.textContent = msg; }
-  function setBusy(b){ snapBtn.disabled = b || !stream; startBtn.disabled = b; switchBtn.disabled = b || !stream; }
+  const btnOpen = $('#btnOpen');
+  const btnStop = $('#btnStop');
+  const btnSnap = $('#btnSnap');
+  const selCamera = $('#camera');
 
-  function applyMirror(){
-    // Ön kamera için aynalama, arka kamera için normal
-    if(facing === 'user'){
-      video.style.transform = 'scaleX(-1)';
-    }else{
-      video.style.transform = '';
-    }
+  let currentStream = null;
+  let devices = [];
+  let deviceIndex = 0; // her zaman arka-normal kamera hedeflenecek
+
+  function setStatus(t){ statusEl.textContent = t; }
+  function log(){ /* console.log.apply(console, arguments); */ }
+
+  // ------- Kamera seçim mantığı (balık gözü yerine normal arka) -------
+  function scoreDevice(d){
+    const L = (d.label||'').toLowerCase();
+
+    let s = 0;
+    // Arka / normal lensi yükselt
+    if (/back|rear|environment|main|standard|regular/.test(L)) s += 8;
+    if (/camera\s*0\b/.test(L)) s += 2; // çoğu cihazda "main" genelde 0'dır
+
+    // Ön kamera ve kullanıcı tarafını düşür
+    if (/front|user|selfie/.test(L)) s -= 6;
+
+    // Ultra wide / fisheye / macro gibi lensleri düşür
+    if (/ultra[-\s]?wide|\buw\b|super[-\s]?wide|fisheye|macro|depth|bokeh|wide\s*angle/.test(L)) s -= 8;
+
+    // Belirsiz ise ama arka ipucu varsa
+    if (!d.label && d.kind==='videoinput') s += 0;
+
+    return s;
+  }
+  function preferBack(list){
+    return list.slice().sort((a,b)=> scoreDevice(b) - scoreDevice(a));
   }
 
-  function stopStream(){
-    if(stream){
-      stream.getTracks().forEach(t => t.stop());
-      stream = null;
+  async function listCameras(){
+    // Etiketleri görebilmek için bir kere izin iste
+    try{
+      const tmp = await navigator.mediaDevices.getUserMedia({video:true,audio:false});
+      tmp.getTracks().forEach(t=>t.stop());
+    }catch(_){ /* kullanıcı iptal etmiş olabilir; yine de enumerate deneriz */ }
+
+    let all = await navigator.mediaDevices.enumerateDevices();
+    all = all.filter(d=>d.kind==='videoinput');
+
+    devices = preferBack(all);
+
+    selCamera.innerHTML = '';
+    devices.forEach((d,i)=>{
+      const o=document.createElement('option');
+      o.value = i;
+      o.textContent = d.label || `Kamera ${i+1}`;
+      selCamera.appendChild(o);
+    });
+
+    // otomatik: en iyi skorlu cihaz (muhtemelen normal arka) -> index 0
+    deviceIndex = 0;
+    selCamera.value = String(deviceIndex);
+  }
+
+  async function stopAll(){
+    if(currentStream){
+      currentStream.getTracks().forEach(t=>t.stop());
+      currentStream = null;
     }
-    snapBtn.disabled = true;
-    switchBtn.disabled = true;
+    btnSnap.disabled = true;
+    btnStop.disabled = true;
   }
 
   async function openCamera(){
+    await stopAll();
+
+    const dev = devices[deviceIndex];
+    if(!dev){ setStatus('Kamera bulunamadı.'); return false; }
+
+    const low = $('#lowres').checked;
+    // Not: deviceId 'exact' ile **seçilen lens**e kilitleniyoruz (ultra-wide kaçsın)
+    const constraints = {
+      video: {
+        deviceId: { exact: dev.deviceId },
+        facingMode: 'environment',
+        width:  low ? { ideal: 1280 } : { ideal: 1920 },
+        height: low ? { ideal: 720  } : { ideal: 1080 },
+        frameRate: { ideal: 30 },
+        advanced: [{ focusMode: 'continuous' }]
+      },
+      audio: false
+    };
+
+    setStatus('Kamera açılıyor…');
     try{
-      stopStream();
-      setStatus((facing==='user'?'Ön':'Arka') + ' kamera açılıyor…');
-      const constraints = {
-        video: { facingMode: { ideal: facing } }, // 'user' = ön, 'environment' = arka
-        audio: false
-      };
-      stream = await navigator.mediaDevices.getUserMedia(constraints);
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      currentStream = stream;
       video.srcObject = stream;
-      await video.play();
-      applyMirror();
-      setStatus('Kamera hazır. MRZ alanını çerçeve içine getir ve "Tara"ya bas.');
-      snapBtn.disabled = false;
-      switchBtn.disabled = false;
-    }catch(err){
-      console.error(err);
-      setStatus('Kamera açılamadı: ' + (err.message || err));
-      snapBtn.disabled = true;
-      switchBtn.disabled = true;
+
+      try{
+        await video.play();
+        $('#tapOverlay').style.display='none';
+      }catch(_){
+        // Autoplay engellenirse
+        $('#tapOverlay').style.display='flex';
+        $('#btnTap').onclick = ()=> video.play().then(()=> $('#tapOverlay').style.display='none');
+      }
+
+      // Arka kamera olduğundan görüntüyü aynalamıyoruz
+      video.style.transform = '';
+
+      setStatus(`Kamera açık: ${(dev.label||'seçili cihaz')}. MRZ penceresine hizala ve Tara.`);
+      btnSnap.disabled = false;
+      btnStop.disabled = false;
+      return true;
+    }catch(e){
+      log('getUserMedia hata:', e.name, e.message);
+      setStatus('Kamera açılamadı: ' + e.message);
+      return false;
     }
   }
 
-  function takeMrzCrop(){
-    const vw = video.videoWidth;
-    const vh = video.videoHeight;
-    if(!vw || !vh){ throw new Error('Video hazır değil.'); }
-
-    // MRZ penceresini video boyutuna göre kes: soldan %5, sağdan %5, alttan %8 boşluk; yükseklik %26
-    const x = Math.round(vw * 0.05);
-    const w = Math.round(vw * 0.90);
-    const h = Math.round(vh * 0.26);
-    const y = Math.round(vh * 0.66); // alt kısım
-
-    canvas.width = w; canvas.height = h;
-    const ctx = canvas.getContext('2d');
-
-    if(facing === 'user'){
-      // Ön kamera aynalı olduğu için crop'ta geri çeviriyoruz
-      ctx.translate(w, 0);
-      ctx.scale(-1, 1);
+  // Kamera menüsü değiştiğinde hemen o kamerayı aç
+  document.addEventListener('change', async (ev)=>{
+    if(ev.target && ev.target.id === 'camera'){
+      deviceIndex = +ev.target.value || 0;
+      if(devices[deviceIndex]){ await openCamera(); }
     }
-    ctx.drawImage(video, x, y, w, h, 0, 0, w, h);
+  });
 
-    return canvas;
-  }
-
+  // ------- MRZ OCR + Ayrıştırma -------
   function normalizeMrzText(t){
     const keep = /[A-Z0-9<\n]/g;
     const up = (t || '').toUpperCase().match(keep)?.join('') || '';
     return up.replace(/ /g,'').replace(/\u00A0/g,'');
   }
-
   function pickMrzLines(text){
     const lines = text.split(/\n+/).map(s => s.trim()).filter(Boolean);
     const candidates = lines.filter(s => s.length >= 25);
     return candidates.slice(-3);
   }
-
   function renderFields(obj){
     const kv = [];
     function row(k, v){ kv.push(`<div class="kv"><b>${k}</b><span>${v ?? ''}</span></div>`); }
@@ -197,7 +249,6 @@
       fieldsEl.innerHTML = '<div class="hint">MRZ ayrıştırılamadı. Farklı açı/ışıkla tekrar deneyin.</div>';
       return;
     }
-
     const f = obj.fields;
     row('Belge türü', f.documentType);
     row('Ülke', f.issuingCountry);
@@ -212,12 +263,28 @@
     fieldsEl.innerHTML = kv.join('');
   }
 
+  function takeMrzCrop(){
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    if(!vw || !vh){ throw new Error('Video hazır değil.'); }
+
+    const x = Math.round(vw * 0.05);
+    const w = Math.round(vw * 0.90);
+    const h = Math.round(vh * 0.26);
+    const y = Math.round(vh * 0.66);
+
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, x, y, w, h, 0, 0, w, h);
+    return canvas;
+  }
+
   async function scan(){
     if(!window.__parseMrz){
       setStatus('MRZ ayrıştırıcı yüklenmedi.');
       return;
     }
-    setBusy(true);
+    btnSnap.disabled = true;
     try{
       const cropCanvas = takeMrzCrop();
 
@@ -264,20 +331,21 @@
       setStatus('Hata: ' + (err.message || err));
       renderFields(null);
     }finally{
-      setBusy(false);
+      btnSnap.disabled = !currentStream;
     }
   }
 
-  startBtn.addEventListener('click', openCamera);
+  // ------- Olaylar -------
+  btnOpen.addEventListener('click', openCamera);
+  btnStop.addEventListener('click', stopAll);
+  btnSnap.addEventListener('click', scan);
 
-  switchBtn.addEventListener('click', async () => {
-    // facing değerini değiştirip kamerayı yeniden aç
-    facing = (facing === 'user') ? 'environment' : 'user';
-    startBtn.textContent = 'Kamerayı Aç (' + (facing==='user'?'Ön':'Arka') + ')';
-    await openCamera();
-  });
-
-  snapBtn.addEventListener('click', scan);
+  // Sayfa açılınca kameraları sırala (arka-normal öncelikli)
+  (async function init(){
+    setStatus('Kameralar listeleniyor…');
+    await listCameras();
+    setStatus('Hazır. "Kamerayı Aç" ile normal arka kamerayı başlat.');
+  })();
 })();
 </script>
 </body>
