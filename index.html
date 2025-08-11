@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Online TC — Hızlı MRZ (Stabil) + Vendor ZXing + Kayıt/TXT</title>
+<title>Online TC — Stabil MRZ + Vendor ZXing + Kayıt/TXT (CORS Fix)</title>
 <style>
   :root{--bg:#0f1115;--card:#171923;--ink:#e8e8ea;--muted:#9aa0a6;--acc:#4f8cff}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
@@ -35,9 +35,8 @@
 </head>
 <body>
 <div class="wrap">
-  <!-- ÜST KONTROLLER -->
   <div class="card">
-    <h1>Online TC — Barkod & MRZ Okuyucu <span class="pill">Stabil MRZ</span></h1>
+    <h1>Online TC — Barkod & MRZ Okuyucu <span class="pill">Stabil + CORS Güvenli</span></h1>
     <div class="row" style="margin-top:6px">
       <button id="btnOpen">Kamerayı Aç</button>
       <button id="btnBarcode" class="secondary" disabled>Barkod Tara</button>
@@ -49,7 +48,6 @@
     </div>
   </div>
 
-  <!-- KAMERA / VİDEO -->
   <div class="card">
     <div class="row" style="margin-bottom:8px">
       <label>Kamera</label>
@@ -63,7 +61,6 @@
     </div>
   </div>
 
-  <!-- SONUÇ / DÜZENLE -->
   <div class="card">
     <h1>Sonuç / Düzenle</h1>
     <div class="grid" style="margin-top:8px">
@@ -92,7 +89,6 @@
     </div>
   </div>
 
-  <!-- KAYIT TABLOSU -->
   <div class="card">
     <h1>Kayıtlar</h1>
     <div class="muted" style="margin-bottom:6px">Veriler cihazınızda (localStorage) tutulur.</div>
@@ -104,7 +100,6 @@
     </table>
   </div>
 
-  <!-- TEŞHİS GÜNLÜĞÜ -->
   <div class="card">
     <details>
       <summary style="cursor:pointer">Teşhis Günlüğü</summary>
@@ -116,56 +111,79 @@
 <script>
 /* ==================== Yardımcılar / Log ==================== */
 const $ = s=>document.querySelector(s);
-const log = (...a)=>{ const t=a.map(x=>typeof x==='object'?JSON.stringify(x):String(x)).join(' '); $('#log').textContent += t + "\n"; console.log(...a); };
+const log = (...a)=>{
+  const t=a.map(x=>{
+    if(x instanceof Error){ return (x.stack||x.message||String(x)); }
+    if(typeof x==='object'){ try{ return JSON.stringify(x); }catch(_){ return String(x); } }
+    return String(x);
+  }).join(' ');
+  $('#log').textContent += t + "\n";
+  console.log(...a);
+};
 const setStatus = t => $('#status').textContent = t;
 const showScanline = b => $('#scanline').style.display = b ? 'block' : 'none';
-window.onerror = (m,s,l,c,e)=>{ log('window.onerror:', m, s+':'+l, e && (e.stack||e)); };
-window.onunhandledrejection = ev=>{ log('unhandledrejection:', ev.reason && (ev.reason.stack||ev.reason)); };
+
+/* “Script error.” vakaları için ayrıntılı dinleyici */
+window.addEventListener('error', (e)=>{
+  // e.filename boş ve mesaj “Script error.” ise CORS kaynaklıdır.
+  log('window.error:', {message:e.message, file:e.filename, line:e.lineno, col:e.colno, error:(e.error && (e.error.stack||e.error))});
+});
+window.addEventListener('unhandledrejection', ev=>{
+  const r = ev.reason;
+  log('unhandledrejection:', r && (r.stack||r.message||r));
+});
+
+/* Güvenli script loader (CORS ayrıntı) */
+function loadScript(url){
+  return new Promise((resolve,reject)=>{
+    const s=document.createElement('script');
+    s.src=url; s.async=true; s.crossOrigin='anonymous';
+    s.onload=()=>resolve({ok:true,url});
+    s.onerror=(ev)=>reject(new Error('Script yüklenemedi: '+url));
+    document.head.appendChild(s);
+  });
+}
 
 /* ==================== KÜTÜPHANELER ==================== */
-/* Barkod: sadece vendor/yerel dosya */
+/* ZXing: vendor/yerel (CORS sorunsuz) */
 async function loadZXingVendorOnly(){
   if(window.ZXingBrowser) return true;
   const localCandidates = [
+    '/vendor/zxing-browser-0.1.4.min.js',
+    '/vendor/zxing-browser.min.js',
     './zxing-browser-0.1.4.min.js',
     './zxing-browser.min.js',
-    './zxing.min.js',
-    '/vendor/zxing-browser-0.1.4.min.js',
-    '/vendor/zxing-browser.min.js'
+    './zxing.min.js'
   ];
   for(const url of localCandidates){
     try{
-      await new Promise((resolve,reject)=>{
-        const s=document.createElement('script'); s.src=url; s.async=true;
-        s.onload=()=>resolve(); s.onerror=()=>reject();
-        document.head.appendChild(s);
-      });
+      await loadScript(url);
       log('ZXing vendor yüklendi:', url);
       if(window.ZXingBrowser) return true;
-    }catch(_){ log('ZXing vendor bulunamadı:', url); }
+    }catch(err){ log('ZXing vendor bulunamadı:', url, err.message); }
   }
   return false;
 }
 
-/* MRZ için Tesseract: CDN→vendor fallback (worker reuse) */
+/* Tesseract: VENDOR ÖNCE! (aynı origin) → CDN fallback */
 async function loadTesseract(){
   if(window.Tesseract) return true;
-  const urls = [
+  const vendor = [
+    '/vendor/tesseract/tesseract.min.js',
+    './vendor/tesseract/tesseract.min.js'
+  ];
+  const cdn = [
     'https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js',
     'https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/4.0.2/tesseract.min.js',
-    'https://unpkg.com/tesseract.js@4.0.2/dist/tesseract.min.js',
-    '/vendor/tesseract-4.0.2.min.js'
+    'https://unpkg.com/tesseract.js@4.0.2/dist/tesseract.min.js'
   ];
-  for(const url of urls){
+  const all = [...vendor, ...cdn];
+  for(const url of all){
     try{
-      await new Promise((resolve,reject)=>{
-        const s=document.createElement('script'); s.src=url; s.async=true;
-        s.onload=()=>resolve(); s.onerror=()=>reject();
-        document.head.appendChild(s);
-      });
+      await loadScript(url);
       log('Tesseract yüklendi:', url);
       return true;
-    }catch(_){ log('Tesseract denemesi başarısız:', url); }
+    }catch(err){ log('Tesseract denemesi başarısız:', url, err.message); }
   }
   return false;
 }
@@ -174,32 +192,12 @@ async function loadTesseract(){
 let devices=[], deviceIndex=0, currentStream=null, currentMode=null; // 'barcode' | 'mrz'
 let scanTimer=null, codeReader=null;
 const storeKey = 'tcid_records_v1';
-
-/* Tesseract worker (tek işçi, tekrar kullan) */
 let mrzWorker=null, mrzBusy=false;
 
 /* Stabilizasyon belleği */
-const stabWin = { // son N frame
-  N: 5,
-  l1: [],
-  l2: [],
-  l3: []
-};
-function pushStab(key, val){
-  if(!val) return;
-  const arr = stabWin[key];
-  arr.push(val);
-  if(arr.length>stabWin.N) arr.shift();
-}
-function majority(arr){
-  const map=new Map();
-  arr.forEach(s=>map.set(s,(map.get(s)||0)+1));
-  let best='', cnt=0;
-  for(const [s,c] of map.entries()){
-    if(c>cnt || (c===cnt && s.length>best.length)){ best=s; cnt=c; }
-  }
-  return best;
-}
+const stabWin = { N: 5, l1: [], l2: [], l3: [] };
+function pushStab(key, val){ if(!val) return; const a=stabWin[key]; a.push(val); if(a.length>stabWin.N) a.shift(); }
+function majority(arr){ const m=new Map(); arr.forEach(s=>m.set(s,(m.get(s)||0)+1)); let best='',cnt=0; for(const [s,c] of m){ if(c>cnt || (c===cnt && s.length>best.length)){ best=s; cnt=c; } } return best; }
 
 /* ==================== Kayıt Deposu ==================== */
 function loadRecords(){ try{ return JSON.parse(localStorage.getItem(storeKey)||'[]'); }catch(_){ return []; } }
@@ -238,13 +236,7 @@ renderTable(); toggleExportButtons();
 /* ==================== Yardımcı Doğrulamalar ==================== */
 function normalizeDigits(s){
   if(!s) return s;
-  return s
-    .replace(/O/g,'0').replace(/D/g,'0')
-    .replace(/I/g,'1').replace(/L/g,'1')
-    .replace(/Z/g,'2')
-    .replace(/S/g,'5')
-    .replace(/B/g,'8')
-    .replace(/G/g,'6');
+  return s.replace(/O/g,'0').replace(/D/g,'0').replace(/I/g,'1').replace(/L/g,'1').replace(/Z/g,'2').replace(/S/g,'5').replace(/B/g,'8').replace(/G/g,'6');
 }
 function isValidDateYYYYMMDD(yy,mm,dd){
   const year = +yy <= 24 ? (2000 + +yy) : (1900 + +yy);
@@ -259,14 +251,13 @@ function isValidDateYYYYMMDD(yy,mm,dd){
 function isValidTCKN(num){
   if(!/^\d{11}$/.test(num)) return false;
   if(num[0]==='0') return false;
-  const digits = num.split('').map(n=>+n);
-  const oddSum = digits[0]+digits[2]+digits[4]+digits[6]+digits[8];
-  const evenSum = digits[1]+digits[3]+digits[5]+digits[7];
-  const d10 = ((oddSum*7 - evenSum) % 10 + 10) % 10;
-  if(d10 !== digits[9]) return false;
-  const d11 = (digits.slice(0,10).reduce((a,b)=>a+b,0)) % 10;
-  if(d11 !== digits[10]) return false;
-  return true;
+  const d = num.split('').map(n=>+n);
+  const odd = d[0]+d[2]+d[4]+d[6]+d[8];
+  const even = d[1]+d[3]+d[5]+d[7];
+  const d10 = ((odd*7 - even) % 10 + 10) % 10;
+  if(d10 !== d[9]) return false;
+  const d11 = (d.slice(0,10).reduce((a,b)=>a+b,0)) % 10;
+  return d11 === d[10];
 }
 
 /* ==================== MRZ / Barkod Ayrıştırıcılar ==================== */
@@ -276,19 +267,16 @@ function extractTCKNAnywhere(text){
   const cand = m[1];
   return isValidTCKN(cand) ? cand : '';
 }
-
-/* MRZ parse + skorlayıcı */
 function scoreMRZ(l1,l2,l3){
-  let score = 0;
-  if(l3 && l3.includes('<<')) score += 8;
-  if(l2 && /^\d{6}/.test(l2)) score += 6;
-  if(l1 && /\d{11}$/.test(l1.replace(/</g,''))) score += 6;
-  if(l1 && l1.length>20) score += 2;
-  if(l2 && l2.length>10) score += 2;
-  if(l3 && l3.length>10) score += 2;
-  return score;
+  let s = 0;
+  if(l3 && l3.includes('<<')) s += 8;
+  if(l2 && /^\d{6}/.test(l2)) s += 6;
+  if(l1 && /\d{11}$/.test(l1.replace(/</g,''))) s += 6;
+  if(l1 && l1.length>20) s += 2;
+  if(l2 && l2.length>10) s += 2;
+  if(l3 && l3.length>10) s += 2;
+  return s;
 }
-/* metin → obj */
 function parseMRZ_TR(text){
   if(!text) return null;
   const lines = text.trim().split(/\n+/).map(s=>s.replace(/\s+/g,'').toUpperCase());
@@ -298,10 +286,9 @@ function parseMRZ_TR(text){
 
   let tckn = '';
   if(l1){
-    const r = l1.replace(/</g,'').toUpperCase();
-    const digits = normalizeDigits(r).replace(/\D/g,'');
-    if(/\d{11}$/.test(digits)){
-      const cand = digits.slice(-11);
+    const r = normalizeDigits(l1.replace(/</g,'').toUpperCase()).replace(/\D/g,'');
+    if(/\d{11}$/.test(r)){
+      const cand = r.slice(-11);
       if(isValidTCKN(cand)) tckn = cand;
     }
   }
@@ -455,7 +442,7 @@ async function startBarcode(){
   if(!currentStream){ const ok = await openCamera(); if(!ok) return; }
   const okLib = await loadZXingVendorOnly();
   if(!okLib){
-    setStatus('ZXing vendor bulunamadı. Aynı klasöre "zxing-browser-0.1.4.min.js" koyun (veya /vendor/).');
+    setStatus('ZXing vendor bulunamadı. /vendor içine ekleyin.');
     return;
   }
   currentMode='barcode'; showScanline(true); setStatus('Barkod taranıyor…');
@@ -478,8 +465,7 @@ async function startBarcode(){
   }, 300);
 }
 
-/* ==================== Basit görüntü işleme ==================== */
-/* gri + global ikili (eşik) */
+/* ==================== Görüntü işleme ==================== */
 function binarize(ctx, w, h, thr=140){
   const img=ctx.getImageData(0,0,w,h), d=img.data;
   for(let i=0;i<d.length;i+=4){
@@ -488,11 +474,10 @@ function binarize(ctx, w, h, thr=140){
   }
   ctx.putImageData(img,0,0);
 }
-/* hafif keskinleştirme (unsharp-ish) */
 function sharpen(ctx, w, h){
   const img=ctx.getImageData(0,0,w,h), d=img.data.slice();
   const out=ctx.getImageData(0,0,w,h), o=out.data;
-  const off=[-w*4,0,w*4,-4,4]; // yukarı, merkez, aşağı, sol, sağ
+  const off=[-w*4,0,w*4,-4,4];
   for(let i=0;i<o.length;i+=4){
     let sum = 0, cnt=0;
     for(const k of off){
@@ -507,6 +492,43 @@ function sharpen(ctx, w, h){
     o[i]=o[i+1]=o[i+2]=val; o[i+3]=255;
   }
   ctx.putImageData(out,0,0);
+}
+
+/* ==================== MRZ (Stabil: çoklu eşik + vote + skor) ==================== */
+async function ensureMRZWorker(){
+  if(mrzWorker) return true;
+  const okLib = await loadTesseract();
+  if(!okLib){ setStatus('Tesseract yüklenemedi. /vendor/tesseract içine kopyalayın.'); return false; }
+  try{
+    if(Tesseract.createWorker){
+      // Aynı origin’den servis edeceksen bu yolları aktif et:
+      // const base = '/vendor/tesseract/';
+      // mrzWorker = await Tesseract.createWorker({
+      //   workerPath: base + 'worker.min.js',
+      //   corePath: base + 'tesseract-core.wasm', // veya 'tesseract-core-simd.wasm'
+      //   langPath: base,
+      //   logger: null
+      // });
+      mrzWorker = await Tesseract.createWorker({ logger: null });
+      await mrzWorker.load();
+      await mrzWorker.loadLanguage('eng');
+      await mrzWorker.initialize('eng');
+      await mrzWorker.setParameters({
+        tessedit_pageseg_mode: '7',
+        tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<'
+      });
+      log('MRZ worker hazır.');
+      return true;
+    }else{
+      mrzWorker = 'legacy';
+      log('Tesseract legacy modda çalışacak.');
+      return true;
+    }
+  }catch(e){
+    log('MRZ worker hata:', e);
+    setStatus('MRZ worker başlatılamadı (muhtemel CORS/worker yolu). /vendor/tesseract yollarını kullanın.');
+    return false;
+  }
 }
 
 /* Bir satırı OCR et (confidence ile) */
@@ -524,31 +546,6 @@ async function ocrWithWorker(canvas, params){
   return { text, conf };
 }
 
-/* ==================== MRZ (Stabil: çoklu eşik + vote + skor) ==================== */
-async function ensureMRZWorker(){
-  if(mrzWorker) return true;
-  const okLib = await loadTesseract();
-  if(!okLib){ setStatus('Tesseract yüklenemedi (CDN engelli ise /vendor/tesseract-4.0.2.min.js ekleyin).'); return false; }
-  try{
-    if(Tesseract.createWorker){
-      mrzWorker = await Tesseract.createWorker({ logger: null });
-      await mrzWorker.load();
-      await mrzWorker.loadLanguage('eng');
-      await mrzWorker.initialize('eng');
-      await mrzWorker.setParameters({
-        tessedit_pageseg_mode: '7',
-        tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<'
-      });
-      log('MRZ worker hazır.');
-      return true;
-    }else{
-      mrzWorker = 'legacy';
-      log('Tesseract legacy modda çalışacak.');
-      return true;
-    }
-  }catch(e){ log('MRZ worker hata:', e); return false; }
-}
-
 async function startMRZ(){
   if(!currentStream){ const ok = await openCamera(); if(!ok) return; }
   const okW = await ensureMRZWorker();
@@ -558,38 +555,23 @@ async function startMRZ(){
 
   const v=$('#video');
   const bandCanvas=document.createElement('canvas'), bctx=bandCanvas.getContext('2d');
-  const l1c=document.createElement('canvas'), l1ctx=l1c.getContext('2d');
-  const l2c=document.createElement('canvas'), l2ctx=l2c.getContext('2d');
-  const l3c=document.createElement('canvas'), l3ctx=l3c.getContext('2d');
 
-  mrzBusy=false;
-  stabWin.l1=[]; stabWin.l2=[]; stabWin.l3=[];
+  mrzBusy=false; stabWin.l1=[]; stabWin.l2=[]; stabWin.l3=[];
 
-  function prepLine(ctxDst, src, sx, sy, sw, sh, scale=2, thr=140){
-    ctxDst.canvas.width = Math.max(700, Math.floor(sw*scale));
-    ctxDst.canvas.height = Math.floor(sh*scale);
-    ctxDst.drawImage(src, sx, sy, sw, sh, 0, 0, ctxDst.canvas.width, ctxDst.canvas.height);
-    // hafif keskin + ikili
-    sharpen(ctxDst, ctxDst.canvas.width, ctxDst.canvas.height);
-    binarize(ctxDst, ctxDst.canvas.width, ctxDst.canvas.height, thr);
-  }
-
-  function chooseBestVariant(ctx, sx, sy, sw, sh, scale, thresholds, params){
-    // Birden çok eşik dene, en iyi skorlu MRZ parçasını seç
+  function chooseVariants(srcCtx, sx, sy, sw, sh, scale, thresholds){
     const cand = [];
     for(const thr of thresholds){
       const tmp = document.createElement('canvas');
       const tctx = tmp.getContext('2d');
       tctx.canvas.width = Math.max(700, Math.floor(sw*scale));
       tctx.canvas.height = Math.floor(sh*scale);
-      tctx.drawImage(ctx.canvas, sx, sy, sw, sh, 0, 0, tctx.canvas.width, tctx.canvas.height);
+      tctx.drawImage(srcCtx.canvas, sx, sy, sw, sh, 0, 0, tctx.canvas.width, tctx.canvas.height);
       sharpen(tctx, tctx.canvas.width, tctx.canvas.height);
       binarize(tctx, tctx.canvas.width, tctx.canvas.height, thr);
-      cand.push({canvas: tmp, thr});
+      cand.push(tmp);
     }
     return cand;
   }
-
   const thresholds = [110,125,140,160];
 
   const tick = async ()=>{
@@ -600,59 +582,44 @@ async function startMRZ(){
       const bandH = Math.floor(vh*0.34), bandY = vh - bandH;
       const scaleBand = 2;
 
-      // band hazırlığı
       bandCanvas.width = Math.floor(vw*scaleBand);
       bandCanvas.height = Math.floor(bandH*scaleBand);
       bctx.drawImage(v, 0, bandY, vw, bandH, 0,0, bandCanvas.width, bandCanvas.height);
-
-      // kaba ikili (band genel)
       binarize(bctx, bandCanvas.width, bandCanvas.height, 135);
 
-      // 3 satırı yaklaşık konumdan al (eşit böl)
       const lineH = Math.floor(bandCanvas.height/3);
-      // her satır için çoklu eşik varyantları üret
-      const vL1 = chooseBestVariant(bctx, 0, 0*lineH, bandCanvas.width, lineH, 1.8, thresholds);
-      const vL2 = chooseBestVariant(bctx, 0, 1*lineH, bandCanvas.width, lineH, 1.8, thresholds);
-      const vL3 = chooseBestVariant(bctx, 0, 2*lineH, bandCanvas.width, lineH, 2.0, thresholds);
+      const vL1 = chooseVariants(bctx, 0, 0*lineH, bandCanvas.width, lineH, 1.8, thresholds);
+      const vL2 = chooseVariants(bctx, 0, 1*lineH, bandCanvas.width, lineH, 1.8, thresholds);
+      const vL3 = chooseVariants(bctx, 0, 2*lineH, bandCanvas.width, lineH, 2.0, thresholds);
 
-      // OCR param setleri
       const pNum = {tessedit_pageseg_mode:'7',tessedit_char_whitelist:'0123456789<', classify_bln_numeric_mode:'1'};
       const pAlpha = {tessedit_pageseg_mode:'7',tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ<'};
       const pMix = {tessedit_pageseg_mode:'7',tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<'};
 
-      // her varyant için OCR → en iyi skoru seç
-      async function bestOf(variants, params, postProc){
-        let best={text:'',conf:0};
-        for(const {canvas,thr} of variants){
-          const {text, conf} = await ocrWithWorker(canvas, params);
-          const clean = (postProc(text)||'').toUpperCase().trim();
-          const effective = clean.replace(/[^\dA-Z<\n]/g,'');
-          if(effective.length===0) continue;
-          // basit kalite metriği: conf + uzunluk
-          const quality = (conf||0) + effective.length*1.5;
-          if(quality > (best.q||-1)){
-            best = {text: effective, conf, q: quality};
-          }
+      async function bestOf(variants, params, cleanFn){
+        let bestTxt='', bestQ=-1;
+        for(const c of variants){
+          const {text, conf} = await ocrWithWorker(c, params);
+          const cleaned = (cleanFn(text)||'').toUpperCase().replace(/[^\dA-Z<\n]/g,'').trim();
+          if(!cleaned) continue;
+          const q = (conf||0) + cleaned.length*1.5;
+          if(q>bestQ){ bestQ=q; bestTxt=cleaned; }
         }
-        return best.text;
+        return bestTxt;
       }
       const l2 = await bestOf(vL2, pNum, t=>t.replace(/[^\d<\n]/g,''));
       const l3 = await bestOf(vL3, pAlpha, t=>t.replace(/[^A-Z<\n]/g,''));
       const l1 = await bestOf(vL1, pMix, t=>t.replace(/[^\dA-Z<\n]/g,''));
 
-      // stabilizasyon havuzuna at
       pushStab('l1', l1); pushStab('l2', l2); pushStab('l3', l3);
-
-      // majority vote
       const s1 = majority(stabWin.l1);
       const s2 = majority(stabWin.l2);
       const s3 = majority(stabWin.l3);
-
       const cleaned = [s1,s2,s3].filter(Boolean).join('\n');
+
       if(cleaned.replace(/\s/g,'').length>20){
         const mrz = parseMRZ_TR(cleaned);
         if(mrz){
-          // skor bazlı “tamamlandı” eşiği
           const okScore = mrz._score >= 12 && (mrz.tckn || mrz.dogum);
           if(okScore){
             showScanline(false);
@@ -671,23 +638,22 @@ async function startMRZ(){
         setStatus('MRZ bekleniyor… Kartı düz ve yakın tutun.');
       }
     }catch(e){
-      log('MRZ tick hata:', e.name || e, e.message||'');
+      log('MRZ tick hata:', e);
     }finally{
       mrzBusy=false;
     }
   };
 
-  // Daha sık ama çakışmasız (busy bayrağı)
   scanTimer = setInterval(tick, 600);
 }
 
 /* ==================== UI Olayları ==================== */
 $('#btnOpen').addEventListener('click', async ()=>{
-  try{ await listCameras(); const ok = await openCamera(); if(!ok) return; }catch(e){ log('btnOpen hata:', e.name, e.message); }
+  try{ await listCameras(); const ok = await openCamera(); if(!ok) return; }catch(e){ log('btnOpen hata:', e); }
 });
 $('#btnStop').addEventListener('click', async ()=>{ await stopAll(); setStatus('Durduruldu.'); });
-$('#btnBarcode').addEventListener('click', async ()=>{ try{ await startBarcode(); }catch(e){ log('startBarcode hata:', e.name, e.message); } });
-$('#btnMRZ').addEventListener('click', async ()=>{ try{ await startMRZ(); }catch(e){ log('startMRZ hata:', e.name, e.message); } });
+$('#btnBarcode').addEventListener('click', async ()=>{ try{ await startBarcode(); }catch(e){ log('startBarcode hata:', e); } });
+$('#btnMRZ').addEventListener('click', async ()=>{ try{ await startMRZ(); }catch(e){ log('startMRZ hata:', e); } });
 $('#camera').addEventListener('change', async ()=>{ deviceIndex=+$('#camera').value; if(currentStream){ await openCamera(); } });
 
 /* Kayıt ekleme / silme / dışa aktarım */
@@ -722,9 +688,7 @@ $('#btnExport').addEventListener('click', ()=>{
 });
 
 /* İlk yükleme: sadece kameraları listele (akış açılmaz) */
-(async()=>{ try{ await listCameras(); }catch(e){ log('listeleme hata:', e.name, e.message); } })();
-
-/* Kayıt varsa export/clear aktif */
+(async()=>{ try{ await listCameras(); }catch(e){ log('listeleme hata:', e); } })();
 toggleExportButtons();
 </script>
 </body>
