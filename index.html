@@ -1,587 +1,253 @@
 <!doctype html>
 <html lang="tr">
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Online TC — MRZ (Fotoğraf ile Yüksek Kalite)</title>
-<style>
-  :root{--bg:#0f1115;--card:#171923;--ink:#e8e8ea;--muted:#9aa0a6;--acc:#4f8cff}
-  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
-  .wrap{max-width:980px;margin:0 auto;padding:14px}
-  .card{background:var(--card);border-radius:16px;box-shadow:0 6px 30px rgb(0 0 0/.25);padding:14px;margin:12px 0}
-  h1{margin:0 0 8px;font-size:20px}
-  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-  button{border:0;border-radius:10px;padding:10px 14px;cursor:pointer;background:var(--acc);color:#fff;font-weight:600}
-  button.secondary{background:#2a2e3a} button.danger{background:#e54848}
-  button:disabled{opacity:.55;cursor:not-allowed}
-  label{font-size:13px;color:var(--muted)}
-  select,input[type="checkbox"]{padding:8px;border-radius:8px;border:1px solid #2b2f3a;background:#0e1016;color:var(--ink)}
-  input,textarea{width:100%;padding:10px;border-radius:10px;border:1px solid #2b2f3a;background:#0e1016;color:var(--ink)}
-  textarea{min-height:90px}
-  .video-wrap{position:relative;border:1px solid #2b2f3a;border-radius:12px;overflow:hidden}
-  video{width:100%;max-height:50vh;background:#000}
-  .overlay{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.35)}
-  .overlay button{background:#000;border:1px solid #444}
-  .scanline{position:absolute;left:0;right:0;bottom:34%;height:2px;background:rgba(79,140,255,.9);box-shadow:0 0 14px rgba(79,140,255,.9)}
-  .hint{font-size:12px;color:#9aa0a6}
-  pre{white-space:pre-wrap;background:#0e1016;border:1px solid #2b2f3a;padding:12px;border-radius:12px;max-height:30vh;overflow:auto}
-  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
-  @media (max-width:700px){.grid{grid-template-columns:1fr}}
-  table{width:100%;border-collapse:collapse}
-  th,td{padding:10px;border-bottom:1px solid #2b2f3a;font-size:14px;word-break:break-word}
-  .muted{color:var(--muted)}
-  .pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#202431;color:#cbd5e1;font-size:12px}
-  .img-prev{max-width:100%;border:1px dashed #394150;border-radius:10px}
-</style>
+  <meta charset="utf-8" />
+  <title>MRZ Okuyucu (Tarayıcıda, Lisanssız)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    body { margin: 0; background:#0b0f14; color:#e6eef8; }
+    header { padding:16px 20px; border-bottom:1px solid #1f2733; display:flex; justify-content:space-between; align-items:center;}
+    header h1 { font-size:18px; margin:0; }
+    main { display:grid; grid-template-columns: 1.3fr 0.7fr; gap:16px; padding:16px; }
+    .panel { background:#0f1520; border:1px solid #1d2633; border-radius:12px; overflow:hidden; }
+    .panel h2 { font-size:14px; margin:0; padding:10px 12px; border-bottom:1px solid #1d2633; color:#b9c8da;}
+    .content { padding:12px; }
+    #video { width:100%; border-radius:8px; background:#000; }
+    #overlay { position:absolute; inset:0; pointer-events:none; }
+    .stack { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+    button { border:1px solid #2a3547; background:#162032; color:#e6eef8; padding:10px 14px; border-radius:10px; cursor:pointer; font-weight:600; }
+    button:disabled{opacity:.6; cursor:wait;}
+    .hint { font-size:12px; color:#9bb0c9; line-height:1.5; }
+    pre { white-space:pre-wrap; background:#0c111b; padding:10px; border-radius:8px; border:1px solid #1d2633; }
+    .two { display:grid; grid-template-columns: 1fr 1fr; gap:8px; }
+    .kv { display:grid; grid-template-columns: 140px 1fr; gap:6px; font-size:14px; padding:6px 8px; border-bottom:1px dashed #223049; }
+    .kv b { color:#cfe1ff; }
+    footer { padding:10px 16px; font-size:12px; color:#8fa8c7; border-top:1px solid #1f2733; }
+    .frame { position:relative; }
+    .mrz-window {
+      position:absolute; left:5%; right:5%; height:26%;
+      bottom:8%; border:2px dashed #58a6ff88; border-radius:8px; box-shadow:0 0 0 200vmax #0000 inset;
+    }
+    .grid { display:grid; gap:8px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+  </style>
+  <!-- Tesseract.js (OCR) -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <!-- MRZ ayrıştırıcı (ESM) -->
+  <script type="module" id="mrz-module">
+    // Bu script etiketi sadece modül importu için. Asıl uygulama aşağıda.
+    import { parse as parseMrz } from 'https://unpkg.com/mrz@4.2.1/lib-esm/index.js';
+    window.__parseMrz = parseMrz;
+  </script>
 </head>
 <body>
-<noscript style="color:#fff;background:#b91c1c;padding:8px;display:block;text-align:center">Bu uygulama JavaScript olmadan çalışmaz.</noscript>
-<div class="wrap">
-  <div class="card">
-    <h1>Online TC — Sadece MRZ <span class="pill">Fotoğraf ile daha net</span></h1>
-    <div class="row" style="margin-top:6px">
-      <button id="btnOpen">Kamerayı Aç</button>
-      <button id="btnSnap" class="secondary" disabled>Fotoğraf Çek</button>
-      <input type="file" id="file" accept="image/*" style="display:none">
-      <button id="btnUpload" class="secondary">Fotoğraf Yükle</button>
-      <button id="btnMRZ" class="secondary" disabled>Seçili Fotoğraftan MRZ Tara</button>
-      <button id="btnStop" class="secondary" disabled>Durdur</button>
-      <button id="btnExport" class="secondary" disabled>TXT dışa aktar</button>
-      <button id="btnClear" class="danger" disabled>Tüm kayıtları sil</button>
-      <span id="status" style="color:#cbd5e1">Hazır.</span>
+  <header>
+    <h1>MRZ Okuyucu — HTML + Tesseract.js</h1>
+    <div class="stack">
+      <button id="startBtn">Kamerayı Aç</button>
+      <button id="snapBtn" disabled>Tara</button>
     </div>
-    <div class="hint">İpucu: “Fotoğraf Çek” görüntü kalitesini video karesine göre ciddi artırır. MRZ bandı kartın <b>altındaki son 1/3</b> bölgedir.</div>
-  </div>
+  </header>
 
-  <div class="card">
-    <div class="row" style="margin-bottom:8px">
-      <label>Kamera</label>
-      <select id="camera"></select>
-      <label><input type="checkbox" id="lowres"> Düşük çözünürlük (1280×720)</label>
-    </div>
-    <div class="video-wrap">
-      <video id="video" autoplay playsinline muted></video>
-      <div class="overlay" id="tapOverlay"><button id="btnTap">Videoyu Başlat</button></div>
-      <div class="scanline"></div>
-    </div>
-    <div class="row" style="margin-top:8px">
-      <img id="preview" class="img-prev" alt="Seçili fotoğraf önizleme"/>
-    </div>
-  </div>
+  <main>
+    <section class="panel">
+      <h2>Kamera</h2>
+      <div class="content grid">
+        <div class="frame">
+          <video id="video" autoplay playsinline></video>
+          <div class="mrz-window" title="MRZ penceresi"></div>
+        </div>
+        <div class="two">
+          <div>
+            <div class="hint">
+              • MRZ, belgenin altındaki 2–3 satırlık makine okunur alandır.<br/>
+              • MRZ penceresini o alana denk getirecek şekilde tut.<br/>
+              • Işık iyi olmalı; parlamadan kaçın.
+            </div>
+          </div>
+          <div>
+            <div class="hint">
+              İpucu: Sonuçlar zayıfsa belgeyi düz tut, kameraya paralel hizala ve tekrar tara.
+            </div>
+          </div>
+        </div>
+        <canvas id="canvas" style="display:none;"></canvas>
+      </div>
+    </section>
 
-  <div class="card">
-    <h1>Sonuç / Düzenle</h1>
-    <div class="grid" style="margin-top:8px">
-      <div><label>TC Kimlik No</label><input id="tckn" placeholder="11 haneli"/></div>
-      <div><label>Ad</label><input id="ad"/></div>
-      <div><label>Soyad</label><input id="soyad"/></div>
-      <div><label>Doğum (YYYY-MM-DD)</label><input id="dogum" placeholder="1990-01-31"/></div>
-    </div>
-    <label style="margin-top:10px;display:block">Ham veri</label>
-    <textarea id="raw" rows="4" spellcheck="false"></textarea>
-    <div class="row" style="margin-top:10px">
-      <button id="btnSave">Kaydet</button>
-      <span class="muted">Kaydetmeden önce kontrol edin.</span>
-    </div>
-  </div>
+    <section class="panel">
+      <h2>Sonuç</h2>
+      <div class="content grid">
+        <div>
+          <div id="status" class="hint">Hazır.</div>
+          <pre id="rawText" class="mono"></pre>
+        </div>
+        <div id="fields"></div>
+      </div>
+    </section>
+  </main>
 
-  <div class="card">
-    <h1>Kayıtlar</h1>
-    <div class="muted" style="margin-bottom:6px">Veriler cihazınızda (localStorage) tutulur.</div>
-    <table id="tbl"><thead><tr><th>#</th><th>TCKN</th><th>Ad</th><th>Soyad</th><th>Doğum</th><th>Sil</th></tr></thead><tbody></tbody></table>
-  </div>
-
-  <div class="card">
-    <details><summary style="cursor:pointer">Teşhis Günlüğü</summary><pre id="log"></pre></details>
-  </div>
-</div>
+  <footer>
+    Bu örnek, tarayıcıda çalışan açık kaynak Tesseract.js ile MRZ ayrıştırıcıyı kullanır (kamera erişimi gerekli).
+  </footer>
 
 <script>
-/* ==================== Yardımcı / Log ==================== */
-const $ = s=>document.querySelector(s);
-const log = (...a)=>{
-  const t=a.map(x=>x instanceof Error?(x.stack||x):typeof x==='object'?JSON.stringify(x):String(x)).join(' ');
-  $('#log').textContent += t + "\n"; console.log(...a);
-};
-const setStatus = t => $('#status').textContent = t;
-window.addEventListener('error', e=>{ log('window.error:', {msg:e.message,file:e.filename,line:e.lineno,col:e.colno}); });
-window.addEventListener('unhandledrejection', ev=>{ log('unhandledrejection:', ev.reason && (ev.reason.stack||ev.reason)); });
+(function(){
+  const startBtn = document.getElementById('startBtn');
+  const snapBtn  = document.getElementById('snapBtn');
+  const video    = document.getElementById('video');
+  const canvas   = document.getElementById('canvas');
+  const statusEl = document.getElementById('status');
+  const rawText  = document.getElementById('rawText');
+  const fieldsEl = document.getElementById('fields');
 
-/* ==================== Tesseract yükleyici ==================== */
-/* Koyabileceğin yerel dosya yapısı (önerilen):
-   /vendor/tesseract/
-      tesseract.min.js
-      worker.min.js
-      tesseract-core-simd.wasm.js
-      tesseract-core.wasm.js
-      /lang/eng.traineddata.gz  (opsiyonel; genelde CDN'den iner)
-*/
-const TESS_CANDIDATES = [
-  { base:'/vendor/tesseract/', script:'/vendor/tesseract/tesseract.min.js' },
-  { base:'./',                script:'./tesseract.min.js' },
-  { base:'https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/',
-    script:'https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js' }
-];
+  let stream = null;
 
-function absolute(u){ try{ return new URL(u, location.href).href; }catch(_){ return u; } }
+  function setStatus(msg){ statusEl.textContent = msg; }
+  function setBusy(b){ snapBtn.disabled = b || !stream; startBtn.disabled = b; }
 
-async function exists(url){
-  try{
-    const r = await fetch(url, { method:'HEAD', cache:'no-store' });
-    return r.ok;
-  }catch(_){ return false; }
-}
-
-async function pickTesseractBase(){
-  for(const c of TESS_CANDIDATES){
+  async function openCamera(){
     try{
-      // script'i yüklemeden önce worker var mı bak
-      const okWorker = await exists(absolute(c.base + 'worker.min.js'));
-      const okCore   = await exists(absolute(c.base + 'tesseract-core.wasm.js'));
-      const okCoreS  = await exists(absolute(c.base + 'tesseract-core-simd.wasm.js'));
-      if(!okWorker || !okCore || !okCoreS){
-        // vendor eksikse, CDN'e geç
-        if(c.base.startsWith('http')) {
-          // CDN'de HEAD bazı ağlarda engelli olabilir; yine de deneyeceğiz
-          log('tesseract candidate (CDN) denenecek:', c.base);
-        } else {
-          log('tesseract candidate eksik dosya:', c.base, {okWorker,okCore,okCoreS});
-          // yerel aday eksikse bu adayı atla
-          if(!(okWorker && (okCore || okCoreS))) continue;
+      setStatus('Kamera açılıyor…');
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment' },
+        audio: false
+      });
+      video.srcObject = stream;
+      await video.play();
+      setStatus('Kamera hazır. MRZ alanını çerçeve içine getir ve "Tara"ya bas.');
+      snapBtn.disabled = false;
+    }catch(err){
+      console.error(err);
+      setStatus('Kamera açılamadı: ' + (err.message || err));
+      snapBtn.disabled = true;
+    }
+  }
+
+  function takeMrzCrop(){
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    if(!vw || !vh){ throw new Error('Video hazır değil.'); }
+
+    // MRZ penceresini video boyutuna göre kes: soldan %5, sağdan %5, alttan %8 boşluk; yükseklik %26
+    const x = Math.round(vw * 0.05);
+    const w = Math.round(vw * 0.90);
+    const h = Math.round(vh * 0.26);
+    const y = Math.round(vh * 0.66); // alt kısım
+
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, x, y, w, h, 0, 0, w, h);
+
+    return canvas;
+  }
+
+  function normalizeMrzText(t){
+    // MRZ karakter kümesi ve satır uzunlukları: TD3 (pasaport) 2x44, TD1 (kimlik) 3x30
+    const keep = /[A-Z0-9<\n]/g;
+    const up = t.toUpperCase().match(keep)?.join('') || '';
+    // Boşlukları kaldır, < < -> <<, vs.
+    return up.replace(/ /g,'').replace(/\u00A0/g,'');
+  }
+
+  function pickMrzLines(text){
+    const lines = text.split(/\n+/).map(s => s.trim()).filter(Boolean);
+    // Sona yakın 3 satır genelde MRZ'dir; uzunluğa göre filtrele
+    const candidates = lines.filter(s => s.length >= 25);
+    // En son 3 taneyi al
+    const picked = candidates.slice(-3);
+    return picked;
+  }
+
+  function renderFields(obj){
+    const kv = [];
+    function row(k, v){ kv.push(`<div class="kv"><b>${k}</b><span>${v ?? ''}</span></div>`); }
+    fieldsEl.innerHTML = ''; // reset
+
+    if(!obj || !obj.fields){
+      fieldsEl.innerHTML = '<div class="hint">MRZ ayrıştırılamadı. Farklı açı/ışıkla tekrar deneyin.</div>';
+      return;
+    }
+
+    const f = obj.fields;
+    row('Belge türü', f.documentType);
+    row('Ülke', f.issuingCountry);
+    row('Soyad', f.lastName);
+    row('İsimler', f.firstName);
+    row('Belge No', f.documentNumber);
+    row('Uyruk', f.nationality);
+    row('Doğum Tarihi', f.birthDate);
+    row('Cinsiyet', f.sex);
+    row('Son Geçerlilik', f.expirationDate);
+    row('Opsiyonel Alan', f.optional);
+    fieldsEl.innerHTML = kv.join('');
+  }
+
+  async function scan(){
+    if(!window.__parseMrz){
+      setStatus('MRZ ayrıştırıcı yüklenmedi.');
+      return;
+    }
+    setBusy(true);
+    try{
+      const cropCanvas = takeMrzCrop();
+
+      setStatus('OCR çalışıyor… (Tesseract.js)');
+      const { data } = await Tesseract.recognize(
+        cropCanvas,
+        'eng',
+        {
+          logger: m => { if(m.status) setStatus(`${m.status}… ${Math.round((m.progress||0)*100)}%`); },
+          // MRZ için whitelist ve PSM ayarları
+          tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<',
+          preserve_interword_spaces: '1',
+          user_defined_dpi: '300',
+          oem: 1 // LSTM
+        }
+      );
+
+      const normalized = normalizeMrzText(data.text || '');
+      rawText.textContent = normalized || '(metin bulunamadı)';
+
+      const lines = pickMrzLines(normalized);
+      // 2 satır (TD3) veya 3 satır (TD1) olacak şekilde toparla
+      // En olası iki senaryoya göre birleştir
+      let mrzBlock = '';
+      if(lines.length >= 3){
+        // önce 3 satırlı kimlik olasılığı
+        const last3 = lines.slice(-3);
+        if(last3[0].length >= 28 && last3[1].length >= 28 && last3[2].length >= 28){
+          mrzBlock = last3.join('\n');
         }
       }
-      await loadScript(c.script);
-      log('tesseract script yüklendi:', c.script);
-      return c.base;
-    }catch(e){
-      log('tesseract script yüklenemedi:', c.script, e.message);
-    }
-  }
-  return null;
-}
+      if(!mrzBlock && lines.length >= 2){
+        const last2 = lines.slice(-2);
+        mrzBlock = last2.join('\n');
+      }
 
-function loadScript(u){
-  return new Promise((res,rej)=>{
-    const s=document.createElement('script');
-    s.src=u; s.async=true; s.crossOrigin="anonymous";
-    s.onload=()=>res();
-    s.onerror=()=>rej(new Error('yüklenemedi:'+u));
-    document.head.appendChild(s);
-  });
-}
+      if(!mrzBlock){
+        setStatus('MRZ bulunamadı. Yeniden deneyin.');
+        renderFields(null);
+        return;
+      }
 
-let _tessBase = null;
-async function ensureTesseractReady(){
-  if(window.Tesseract && _tessBase) return true;
-  _tessBase = await pickTesseractBase();
-  if(!_tessBase){ setStatus('Tesseract tabanı bulunamadı. /vendor/tesseract/ altına dosyaları koyun veya internet erişimi verin.'); return false; }
-  if(!window.Tesseract){ setStatus('Tesseract kütüphanesi yüklenemedi.'); return false; }
-  return true;
-}
-
-function tessPaths(){
-  const base = _tessBase || '/vendor/tesseract/';
-  return {
-    workerPath: base + 'worker.min.js',
-    corePathSIMD: base + 'tesseract-core-simd.wasm.js',
-    corePath: base + 'tesseract-core.wasm.js',
-    langPath: base + 'lang'
-  };
-}
-
-/* ==================== Global Durum ==================== */
-let devices=[], deviceIndex=0, currentStream=null;
-let selectedImage=null;
-const storeKey='tcid_records_v1';
-
-/* ==================== Depo ==================== */
-function loadRecords(){ try{ return JSON.parse(localStorage.getItem(storeKey)||'[]'); }catch(_){ return []; } }
-function saveRecords(l){ localStorage.setItem(storeKey, JSON.stringify(l||[])); renderTable(); toggleExportButtons(); }
-function renderTable(){
-  const tb=$('#tbl tbody'); const list=loadRecords(); tb.innerHTML='';
-  list.forEach((r,i)=>{
-    const tr=document.createElement('tr');
-    tr.innerHTML = `
-      <td>${i+1}</td>
-      <td>${r.tckn||''}</td>
-      <td>${r.ad||''}</td>
-      <td>${r.soyad||''}</td>
-      <td>${r.dogum||''}</td>
-      <td><button class="danger" data-i="${i}">Sil</button></td>`;
-    tb.appendChild(tr);
-  });
-  tb.querySelectorAll('button[data-i]').forEach(b=>b.onclick=()=>{ const i=+b.dataset.i; const l=loadRecords(); l.splice(i,1); saveRecords(l); });
-}
-function toggleExportButtons(){ const any=loadRecords().length>0; $('#btnExport').disabled=!any; $('#btnClear').disabled=!any; }
-renderTable(); toggleExportButtons();
-
-/* ==================== Normalizasyon & Doğrulama ==================== */
-function normalizeDigits(s){ return (s||'').replace(/[OD]/g,'0').replace(/[IL]/g,'1').replace(/Z/g,'2').replace(/S/g,'5').replace(/B/g,'8').replace(/G/g,'6'); }
-function isValidTCKN(n){
-  if(!/^\d{11}$/.test(n) || n[0]==='0') return false;
-  const d=n.split('').map(Number), o=d[0]+d[2]+d[4]+d[6]+d[8], e=d[1]+d[3]+d[5]+d[7];
-  const d10=((o*7 - e)%10+10)%10; if(d10!==d[9]) return false;
-  const d11=d.slice(0,10).reduce((a,b)=>a+b,0)%10; return d11===d[10];
-}
-function yyyyFromYY(yy){ const y=+yy; return y<=24?2000+y:1900+y; }
-
-/* ==================== MRZ Ayrıştırıcı ==================== */
-function scoreMRZ(l1,l2,l3){
-  let s=0;
-  if(l3 && /<</.test(l3)) s+=8;
-  if(l2 && /^\d{6}/.test(l2)) s+=6;
-  if(l1 && /\d{11}$/.test(l1.replace(/</g,''))) s+=6;
-  return s + (l1?.length||0)/10 + (l2?.length||0)/10 + (l3?.length||0)/10;
-}
-function parseMRZ_TR(text){
-  if(!text) return null;
-  const L=text.trim().split(/\n+/).map(s=>s.replace(/\s+/g,'').toUpperCase());
-  const l1=L[0]||'', l2=L[1]||'', l3=L[2]||'';
-
-  let tckn='';
-  {
-    const only=normalizeDigits(l1.replace(/</g,'')).replace(/\D/g,'');
-    const m=only.match(/(\d{11})$/); if(m && isValidTCKN(m[1])) tckn=m[1];
-  }
-  let dogum='';
-  {
-    const six=(normalizeDigits(l2).match(/^\d{6}/)||[])[0];
-    if(six){
-      const yy=six.slice(0,2), mm=six.slice(2,4), dd=six.slice(4,6);
-      const Y=yyyyFromYY(yy), M=+mm, D=+dd;
-      if(M>=1&&M<=12&&D>=1&&D<=31) dogum=`${Y}-${mm}-${dd}`;
-    }
-  }
-  let ad='',soyad='';
-  {
-    if(l3.includes('<<')){
-      const [s,g]=l3.split('<<');
-      soyad=s.replace(/</g,' ').trim().replace(/\s+/g,' ');
-      ad=(g||'').replace(/</g,' ').trim().replace(/\s+/g,' ');
-    }
-  }
-  if(!(tckn||dogum||ad||soyad)) return null;
-  return {tckn,dogum,ad,soyad,_score:scoreMRZ(l1,l2,l3)};
-}
-
-/* ==================== Kamera ==================== */
-function preferBack(list){
-  const score=d=>{
-    const L=(d.label||'').toLowerCase();
-    let s=0; if(/back|rear|environment/.test(L)) s+=5; if(/front|user/.test(L)) s-=4; if(/camera\s*0.*back/.test(L)) s+=2;
-    return s;
-  };
-  return list.slice().sort((a,b)=>score(b)-score(a));
-}
-async function listCameras(){
-  try{ const tmp=await navigator.mediaDevices.getUserMedia({video:true,audio:false}); tmp.getTracks().forEach(t=>t.stop()); }catch(_){ }
-  let all=await navigator.mediaDevices.enumerateDevices();
-  all=all.filter(d=>d.kind==='videoinput');
-  devices=preferBack(all);
-
-  const sel=$('#camera'); sel.innerHTML='';
-  devices.forEach((d,i)=>{
-    const o=document.createElement('option');
-    o.value=i;
-    o.textContent=d.label || `Kamera ${i+1}`;
-    sel.appendChild(o);
-  });
-  deviceIndex = 0;
-  sel.value = String(deviceIndex);
-}
-async function openCamera(){
-  await stopAll();
-  const dev=devices[deviceIndex];
-  if(!dev){ setStatus('Kamera bulunamadı.'); return false; }
-  const low=$('#lowres').checked;
-  const constraints={ video:{
-      deviceId:{exact:dev.deviceId},
-      facingMode:'environment',
-      width: low?{ideal:1280}:{ideal:1920},
-      height: low?{ideal:720}:{ideal:1080},
-      frameRate:{ideal:30},
-      advanced:[{focusMode:'continuous'}]
-    }, audio:false };
-  setStatus('Kamera açılıyor…');
-  const v=$('#video');
-  try{
-    const stream=await navigator.mediaDevices.getUserMedia(constraints);
-    currentStream=stream; v.srcObject=stream;
-    try{ await v.play(); $('#tapOverlay').style.display='none'; }
-    catch(_){ $('#tapOverlay').style.display='flex'; $('#btnTap').onclick=()=>v.play().then(()=>$('#tapOverlay').style.display='none'); }
-    setStatus('Kamera açık.');
-    $('#btnSnap').disabled=false;
-    $('#btnStop').disabled=false;
-    if(selectedImage) $('#btnMRZ').disabled=false;
-    return true;
-  }catch(e){ log('getUserMedia:', e.name, e.message); setStatus('Kamera açılamadı: '+e.message); return false; }
-}
-async function stopAll(){
-  if(currentStream){ currentStream.getTracks().forEach(t=>t.stop()); }
-  currentStream=null;
-  $('#btnSnap').disabled=true; $('#btnStop').disabled=true;
-}
-
-/* Kamera değişince hemen o kamerayı aç */
-document.addEventListener('change', async (ev)=>{
-  if(ev.target && ev.target.id==='camera'){
-    deviceIndex = +ev.target.value || 0;
-    if(devices[deviceIndex]){ await openCamera(); }
-  }
-});
-
-/* ==================== Fotoğraf alma / yükleme ==================== */
-async function takePhoto(){
-  if(!currentStream) return null;
-  try{
-    const track=currentStream.getVideoTracks()[0];
-    if('ImageCapture' in window){
-      const ic=new ImageCapture(track);
-      if(ic.takePhoto){ const blob=await ic.takePhoto(); return await createImageFromBlob(blob); }
-      const bitmap=await ic.grabFrame();
-      const c=document.createElement('canvas'); c.width=bitmap.width; c.height=bitmap.height;
-      const ctx=c.getContext('2d'); ctx.drawImage(bitmap,0,0);
-      const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',0.95));
-      return await createImageFromBlob(blob);
-    }
-  }catch(e){ log('takePhoto:',e); }
-  const v=$('#video');
-  const c=document.createElement('canvas'); c.width=v.videoWidth; c.height=v.videoHeight;
-  const ctx=c.getContext('2d'); ctx.drawImage(v,0,0);
-  const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',0.95));
-  return await createImageFromBlob(blob);
-}
-function createImageFromBlob(blob){
-  return new Promise(res=>{
-    const url=URL.createObjectURL(blob);
-    const img=new Image();
-    img.onload=()=>{ URL.revokeObjectURL(url); res(img); };
-    img.src=url;
-  });
-}
-function showPreview(img){
-  selectedImage=img;
-  const prev=$('#preview');
-  const c=document.createElement('canvas'); const ctx=c.getContext('2d');
-  const maxW=900, scale=Math.min(1, maxW/img.width);
-  c.width=Math.floor(img.width*scale); c.height=Math.floor(img.height*scale);
-  ctx.drawImage(img,0,0,c.width,c.height);
-  prev.src=c.toDataURL('image/jpeg',0.9);
-  $('#btnMRZ').disabled=false;
-}
-
-/* ==================== Görüntü işleme ==================== */
-function cropMRZBandFromImage(img){
-  const iw=img.width, ih=img.height, bandH=Math.floor(ih*0.34), bandY=ih - bandH;
-  const scale=2;
-  const c=document.createElement('canvas'), ctx=c.getContext('2d');
-  c.width=Math.floor(iw*scale); c.height=Math.floor(bandH*scale);
-  ctx.drawImage(img, 0, bandY, iw, bandH, 0,0, c.width, c.height);
-  return c;
-}
-function sharpen(ctx,w,h){
-  const img=ctx.getImageData(0,0,w,h), d=img.data.slice();
-  const out=ctx.getImageData(0,0,w,h), o=out.data;
-  const off=[-w*4,0,w*4,-4,4];
-  for(let i=0;i<o.length;i+=4){
-    let sum=0,cnt=0;
-    for(const k of off){ const j=i+k; if(j>=0&&j<d.length){ const g=(d[j]*0.299+d[j+1]*0.587+d[j+2]*0.114)|0; sum+=g; cnt++; } }
-    const center=(d[i]*0.299+d[i+1]*0.587+d[i+2]*0.114)|0;
-    const val=Math.min(255,Math.max(0, center*1.4 - (sum/cnt)*0.4));
-    o[i]=o[i+1]=o[i+2]=val; o[i+3]=255;
-  }
-  ctx.putImageData(out,0,0);
-}
-function adaptiveMeanThreshold(ctx,w,h,block=25,C=10){
-  const src=ctx.getImageData(0,0,w,h); const d=src.data;
-  const gray=new Uint8ClampedArray(w*h);
-  for(let i=0,j=0;i<d.length;i+=4,++j){ gray[j]=(d[i]*0.299+d[i+1]*0.587+d[i+2]*0.114)|0; }
-  const S=new Float64Array((w+1)*(h+1));
-  for(let y=1;y<=h;y++){
-    let rowSum=0; for(let x=1;x<=w;x++){
-      const g=gray[(y-1)*w+(x-1)];
-      rowSum+=g; const idx=y*(w+1)+x;
-      S[idx]=S[(y-1)*(w+1)+x]+rowSum;
-    }
-  }
-  const r=(block|1)>>1; const out=new Uint8ClampedArray(w*h*4);
-  for(let y=0;y<h;y++){
-    const y0=Math.max(0,y-r), y1=Math.min(h-1,y+r);
-    for(let x=0;x<w;x++){
-      const x0=Math.max(0,x-r), x1=Math.min(w-1,x+r);
-      const A=(y1+1)*(w+1)+(x1+1), B=(y0)*(w+1)+(x1+1), Cc=(y1+1)*(w+1)+(x0), D=(y0)*(w+1)+(x0);
-      const area=(x1-x0+1)*(y1-y0+1);
-      const sum=S[A]-S[B]-S[Cc]+S[D];
-      const mean=sum/area;
-      const g=gray[y*w+x];
-      const bw = g > (mean - C) ? 255 : 0;
-      const i=(y*w+x)*4; out[i]=out[i+1]=out[i+2]=bw; out[i+3]=255;
-    }
-  }
-  const dst=new ImageData(out,w,h); ctx.putImageData(dst,0,0);
-}
-function rotateToCanvas(srcCanvas, angleDeg){
-  const rad=angleDeg*Math.PI/180; const cw=srcCanvas.width, ch=srcCanvas.height;
-  const tmp=document.createElement('canvas'); const ctx=tmp.getContext('2d');
-  tmp.width=cw; tmp.height=ch; ctx.translate(cw/2,ch/2); ctx.rotate(rad);
-  ctx.drawImage(srcCanvas, -cw/2, -ch/2);
-  return tmp;
-}
-
-/* ==================== MRZ OCR ==================== */
-async function ocrSingleLine(canvas, whitelist){
-  if(!(await ensureTesseractReady())) return {text:'',conf:0};
-  const p = tessPaths();
-  try{
-    const r = await Tesseract.recognize(canvas,'eng', {
-      tessedit_pageseg_mode: '7',
-      tessedit_char_whitelist: whitelist,
-      workerPath: p.workerPath,
-      corePath: p.corePathSIMD,
-      langPath: p.langPath
-    });
-    const text = (r?.data?.text||'').toUpperCase().replace(/[^\dA-Z<\n ]/g,'').trim();
-    const conf = r?.data?.confidence || 0;
-    return {text, conf};
-  }catch(e1){
-    log('SIMD çekirdek olmadı, normal çekirdek deneniyor…', e1.message);
-    const r = await Tesseract.recognize(canvas,'eng', {
-      tessedit_pageseg_mode: '7',
-      tessedit_char_whitelist: whitelist,
-      workerPath: p.workerPath,
-      corePath: p.corePath,
-      langPath: p.langPath
-    });
-    const text = (r?.data?.text||'').toUpperCase().replace(/[^\dA-Z<\n ]/g,'').trim();
-    const conf = r?.data?.confidence || 0;
-    return {text, conf};
-  }
-}
-
-/* Fotoğraftan MRZ Oku */
-async function runMRZFromSelected(){
-  if(!selectedImage){ alert('Önce fotoğraf seç veya çek.'); return; }
-  if(location.protocol!=='https:' && location.hostname!=='localhost'){
-    alert('Web Worker ve kamera için sayfayı HTTPS üzerinde açın (localhost hariç).');
-  }
-  if(!(await ensureTesseractReady())){
-    setStatus('Tesseract yüklenemedi. /vendor/tesseract/ altına dosyaları koyun veya internet erişimi verin.');
-    return;
-  }
-  setStatus('MRZ işleniyor (fotoğraf)…');
-
-  const band = cropMRZBandFromImage(selectedImage);
-  const bctx = band.getContext('2d');
-  sharpen(bctx, band.width, band.height);
-  adaptiveMeanThreshold(bctx, band.width, band.height, 25, 10);
-
-  const angles=[-2,-1,-0.5,0,0.5,1,2];
-  let bestText='', bestScore=-1;
-
-  for(const a of angles){
-    const rot = rotateToCanvas(band, a);
-    const h = Math.floor(rot.height/3);
-
-    async function getLine(y, scale=1.9){
-      const c=document.createElement('canvas'), ctx=c.getContext('2d');
-      c.width=Math.max(900, rot.width); c.height=Math.floor(h*scale);
-      ctx.imageSmoothingEnabled=false;
-      ctx.drawImage(rot, 0, y, rot.width, h, 0, 0, c.width, c.height);
-
-      const pass1 = await ocrSingleLine(c, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<');
-      const pass2 = await ocrSingleLine(c, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789');
-      const s1 = (pass1.conf||0) + pass1.text.length*1.5;
-      const s2 = (pass2.conf||0) + pass2.text.length*1.5;
-      return s2>=s1 ? pass2.text : pass1.text;
-    }
-
-    const l1 = await getLine(0);
-    const l2 = await getLine(h);
-    const l3 = await getLine(2*h, 2.0);
-
-    const candidate = [l1,l2,l3].filter(Boolean).join('\n');
-    const parsed = parseMRZ_TR(candidate);
-    const score = (parsed? parsed._score:0) + candidate.replace(/\s/g,'').length/10;
-
-    if(score > bestScore){
-      bestScore = score;
-      bestText = candidate;
+      setStatus('MRZ ayrıştırılıyor…');
+      const parsed = window.__parseMrz(mrzBlock);
+      renderFields(parsed);
+      setStatus('Bitti ✅');
+    }catch(err){
+      console.error(err);
+      setStatus('Hata: ' + (err.message || err));
+      renderFields(null);
+    }finally{
+      setBusy(false);
     }
   }
 
-  if(!bestText){ setStatus('MRZ bulunamadı. Işığı artırıp tekrar deneyin.'); return; }
-  $('#raw').value = bestText;
-  const mrz = parseMRZ_TR(bestText);
-  if(mrz){
-    fillForm(mrz);
-    setStatus('MRZ okundu (fotoğraf).');
-  }else{
-    setStatus('Metin bulundu ama ayrıştırılamadı — açı/ışık.');
-  }
-}
-
-/* ==================== Ortak Sonuç / UI ==================== */
-function fillForm(o){
-  if(!o) return;
-  $('#tckn').value=o.tckn||'';
-  $('#ad').value=o.ad||'';
-  $('#soyad').value=o.soyad||'';
-  $('#dogum').value=o.dogum||'';
-  if(o.raw) $('#raw').value=o.raw;
-}
-
-$('#btnOpen').addEventListener('click', async ()=>{
-  try{
-    if(location.protocol!=='https:' && location.hostname!=='localhost'){
-      alert('Kamera için sayfayı https üzerinde açın.');
-    }
-    await listCameras(); await openCamera();
-  }catch(e){ log('btnOpen:',e); }
-});
-$('#btnStop').addEventListener('click', async ()=>{ await stopAll(); setStatus('Durduruldu.'); });
-
-$('#btnSnap').addEventListener('click', async ()=>{
-  try{ const img = await takePhoto(); if(img){ showPreview(img); setStatus('Fotoğraf alındı. MRZ Tara’ya basın.'); } }
-  catch(e){ log('snap:',e); setStatus('Fotoğraf alınamadı.'); }
-});
-
-$('#btnUpload').addEventListener('click', ()=>$('#file').click());
-$('#file').addEventListener('change', async ev=>{
-  const f=ev.target.files[0]; if(!f) return;
-  const img = await createImageFromBlob(f);
-  showPreview(img);
-  setStatus('Fotoğraf seçildi. MRZ Tara’ya basın.');
-});
-
-$('#btnMRZ').addEventListener('click', async ()=>{
-  try{ await runMRZFromSelected(); }
-  catch(e){ log('mrz:',e); setStatus('MRZ okunamadı: '+(e.message||e)); }
-});
-
-$('#btnSave').addEventListener('click', ()=>{
-  const rec={
-    tckn:$('#tckn').value.trim(),
-    ad:$('#ad').value.trim(),
-    soyad:$('#soyad').value.trim(),
-    dogum:$('#dogum').value.trim(),
-    raw:$('#raw').value.trim(),
-    ts:new Date().toISOString()
-  };
-  const l=loadRecords(); l.push(rec); saveRecords(l); setStatus('Kayıt eklendi.');
-});
-$('#btnClear').addEventListener('click', ()=>{ if(confirm('Tüm kayıtlar silinsin mi?')) saveRecords([]); toggleExportButtons(); });
-$('#btnExport').addEventListener('click', ()=>{
-  const l=loadRecords(); if(!l.length){ alert('Dışa aktarılacak kayıt yok.'); return; }
-  const header='TCKN;AD;SOYAD;DOGUM_TARIHI;RAW\n';
-  const lines=l.map(r=>[r.tckn||'',r.ad||'',r.soyad||'',r.dogum||'',(r.raw||'').replace(/\n/g,' ')].join(';'));
-  const blob=new Blob(['\ufeff'+header+lines.join('\n')],{type:'text/plain;charset=utf-8'});
-  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='kimlik_kayitlari.txt'; document.body.appendChild(a); a.click(); a.remove();
-  setStatus('TXT dışa aktarıldı.');
-});
-
-/* İlk yükleme */
-(async()=>{ try{ await listCameras(); }catch(e){ log('listeleme:',e); } })();
-toggleExportButtons();
+  startBtn.addEventListener('click', openCamera);
+  snapBtn.addEventListener('click', scan);
+})();
 </script>
 </body>
 </html>
