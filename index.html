@@ -2,7 +2,7 @@
 <html lang="tr">
 <head>
   <meta charset="utf-8" />
-  <title>MRZ Okuyucu (Tarayıcıda, Lisanssız)</title>
+  <title>MRZ Okuyucu (Ön/Arka Kamera Seçimli)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
@@ -13,7 +13,8 @@
     .panel { background:#0f1520; border:1px solid #1d2633; border-radius:12px; overflow:hidden; }
     .panel h2 { font-size:14px; margin:0; padding:10px 12px; border-bottom:1px solid #1d2633; color:#b9c8da;}
     .content { padding:12px; }
-    #video { width:100%; border-radius:8px; background:#000; }
+    #video { width:100%; border-radius:8px; background:#000; transform: scaleX(-1); }
+    /* Ön kamera ayna etkisi için scaleX(-1). Arka kameraya geçtiğinde JS ile kaldırıyoruz. */
     #overlay { position:absolute; inset:0; pointer-events:none; }
     .stack { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
     button { border:1px solid #2a3547; background:#162032; color:#e6eef8; padding:10px 14px; border-radius:10px; cursor:pointer; font-weight:600; }
@@ -36,7 +37,6 @@
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <!-- MRZ ayrıştırıcı (ESM) -->
   <script type="module" id="mrz-module">
-    // Bu script etiketi sadece modül importu için. Asıl uygulama aşağıda.
     import { parse as parseMrz } from 'https://unpkg.com/mrz@4.2.1/lib-esm/index.js';
     window.__parseMrz = parseMrz;
   </script>
@@ -45,7 +45,8 @@
   <header>
     <h1>MRZ Okuyucu — HTML + Tesseract.js</h1>
     <div class="stack">
-      <button id="startBtn">Kamerayı Aç</button>
+      <button id="startBtn">Kamerayı Aç (Ön)</button>
+      <button id="switchBtn" disabled>Ön ⇄ Arka</button>
       <button id="snapBtn" disabled>Tara</button>
     </div>
   </header>
@@ -95,6 +96,7 @@
 <script>
 (function(){
   const startBtn = document.getElementById('startBtn');
+  const switchBtn= document.getElementById('switchBtn');
   const snapBtn  = document.getElementById('snapBtn');
   const video    = document.getElementById('video');
   const canvas   = document.getElementById('canvas');
@@ -103,25 +105,50 @@
   const fieldsEl = document.getElementById('fields');
 
   let stream = null;
+  // Varsayılan: ÖN (user). İstersen butonla arka (environment) yapılır.
+  let facing = 'user';
 
   function setStatus(msg){ statusEl.textContent = msg; }
-  function setBusy(b){ snapBtn.disabled = b || !stream; startBtn.disabled = b; }
+  function setBusy(b){ snapBtn.disabled = b || !stream; startBtn.disabled = b; switchBtn.disabled = b || !stream; }
+
+  function applyMirror(){
+    // Ön kamera için aynalama, arka kamera için normal
+    if(facing === 'user'){
+      video.style.transform = 'scaleX(-1)';
+    }else{
+      video.style.transform = '';
+    }
+  }
+
+  function stopStream(){
+    if(stream){
+      stream.getTracks().forEach(t => t.stop());
+      stream = null;
+    }
+    snapBtn.disabled = true;
+    switchBtn.disabled = true;
+  }
 
   async function openCamera(){
     try{
-      setStatus('Kamera açılıyor…');
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment' },
+      stopStream();
+      setStatus((facing==='user'?'Ön':'Arka') + ' kamera açılıyor…');
+      const constraints = {
+        video: { facingMode: { ideal: facing } }, // 'user' = ön, 'environment' = arka
         audio: false
-      });
+      };
+      stream = await navigator.mediaDevices.getUserMedia(constraints);
       video.srcObject = stream;
       await video.play();
+      applyMirror();
       setStatus('Kamera hazır. MRZ alanını çerçeve içine getir ve "Tara"ya bas.');
       snapBtn.disabled = false;
+      switchBtn.disabled = false;
     }catch(err){
       console.error(err);
       setStatus('Kamera açılamadı: ' + (err.message || err));
       snapBtn.disabled = true;
+      switchBtn.disabled = true;
     }
   }
 
@@ -138,32 +165,33 @@
 
     canvas.width = w; canvas.height = h;
     const ctx = canvas.getContext('2d');
+
+    if(facing === 'user'){
+      // Ön kamera aynalı olduğu için crop'ta geri çeviriyoruz
+      ctx.translate(w, 0);
+      ctx.scale(-1, 1);
+    }
     ctx.drawImage(video, x, y, w, h, 0, 0, w, h);
 
     return canvas;
   }
 
   function normalizeMrzText(t){
-    // MRZ karakter kümesi ve satır uzunlukları: TD3 (pasaport) 2x44, TD1 (kimlik) 3x30
     const keep = /[A-Z0-9<\n]/g;
-    const up = t.toUpperCase().match(keep)?.join('') || '';
-    // Boşlukları kaldır, < < -> <<, vs.
+    const up = (t || '').toUpperCase().match(keep)?.join('') || '';
     return up.replace(/ /g,'').replace(/\u00A0/g,'');
   }
 
   function pickMrzLines(text){
     const lines = text.split(/\n+/).map(s => s.trim()).filter(Boolean);
-    // Sona yakın 3 satır genelde MRZ'dir; uzunluğa göre filtrele
     const candidates = lines.filter(s => s.length >= 25);
-    // En son 3 taneyi al
-    const picked = candidates.slice(-3);
-    return picked;
+    return candidates.slice(-3);
   }
 
   function renderFields(obj){
     const kv = [];
     function row(k, v){ kv.push(`<div class="kv"><b>${k}</b><span>${v ?? ''}</span></div>`); }
-    fieldsEl.innerHTML = ''; // reset
+    fieldsEl.innerHTML = '';
 
     if(!obj || !obj.fields){
       fieldsEl.innerHTML = '<div class="hint">MRZ ayrıştırılamadı. Farklı açı/ışıkla tekrar deneyin.</div>';
@@ -199,31 +227,26 @@
         'eng',
         {
           logger: m => { if(m.status) setStatus(`${m.status}… ${Math.round((m.progress||0)*100)}%`); },
-          // MRZ için whitelist ve PSM ayarları
           tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<',
           preserve_interword_spaces: '1',
           user_defined_dpi: '300',
-          oem: 1 // LSTM
+          oem: 1
         }
       );
 
-      const normalized = normalizeMrzText(data.text || '');
+      const normalized = normalizeMrzText(data.text);
       rawText.textContent = normalized || '(metin bulunamadı)';
 
       const lines = pickMrzLines(normalized);
-      // 2 satır (TD3) veya 3 satır (TD1) olacak şekilde toparla
-      // En olası iki senaryoya göre birleştir
       let mrzBlock = '';
       if(lines.length >= 3){
-        // önce 3 satırlı kimlik olasılığı
         const last3 = lines.slice(-3);
         if(last3[0].length >= 28 && last3[1].length >= 28 && last3[2].length >= 28){
           mrzBlock = last3.join('\n');
         }
       }
       if(!mrzBlock && lines.length >= 2){
-        const last2 = lines.slice(-2);
-        mrzBlock = last2.join('\n');
+        mrzBlock = lines.slice(-2).join('\n');
       }
 
       if(!mrzBlock){
@@ -246,6 +269,14 @@
   }
 
   startBtn.addEventListener('click', openCamera);
+
+  switchBtn.addEventListener('click', async () => {
+    // facing değerini değiştirip kamerayı yeniden aç
+    facing = (facing === 'user') ? 'environment' : 'user';
+    startBtn.textContent = 'Kamerayı Aç (' + (facing==='user'?'Ön':'Arka') + ')';
+    await openCamera();
+  });
+
   snapBtn.addEventListener('click', scan);
 })();
 </script>
