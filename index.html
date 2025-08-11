@@ -103,20 +103,35 @@ const setStatus = t => $('#status').textContent = t;
 window.addEventListener('error', e=>{ log('window.error:', {msg:e.message,file:e.filename,line:e.lineno,col:e.colno}); });
 window.addEventListener('unhandledrejection', ev=>{ log('unhandledrejection:', ev.reason && (ev.reason.stack||ev.reason)); });
 
-/* ==================== Script loader & Tesseract ==================== */
-function loadScript(u){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=u;s.async=true;s.crossOrigin='anonymous';s.onload=()=>res();s.onerror=()=>rej(new Error('yüklenemedi:'+u));document.head.appendChild(s);});}
+/* ==================== Tesseract yükleyici (Vendor öncelikli) ==================== */
+function loadScript(u){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=u;s.async=true;s.onload=()=>res();s.onerror=()=>rej(new Error('yüklenemedi:'+u));document.head.appendChild(s);});}
+function guessTessBaseFromScript(){
+  const scr=[...document.scripts].map(x=>x.src||'');
+  const hit=scr.find(x=>/tesseract(\.min)?\.js$/i.test(x));
+  if(hit){ try{ const u=new URL(hit, location.href); return u.pathname.replace(/[^/]+$/,''); }catch(_){ } }
+  return '/vendor/tesseract/'; // varsayılan
+}
 async function loadTesseract(){
   if(window.Tesseract) return true;
-  const urls=['/vendor/tesseract/tesseract.min.js','https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js'];
-  for(const u of urls){ try{ await loadScript(u); return true; }catch(e){ log('tesseract deneme:',u,e.message); } }
-  return false;
+  const cand=[
+    './tesseract.min.js',
+    './tesseract.js',
+    '/vendor/tesseract/tesseract.min.js',
+    '/vendor/tesseract/tesseract.js'
+  ];
+  for(const u of cand){
+    try{ await loadScript(u); log('tesseract yüklendi (vendor):',u); return true; }
+    catch(e){ log('tesseract vendor denemesi:',u,e.message); }
+  }
+  // CDN en sona bırakıldı (çoğu ağda engelli)
+  const cdn='https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js';
+  try{ await loadScript(cdn); log('tesseract yüklendi (CDN):',cdn); return true; }
+  catch(e){ log('tesseract CDN başarısız:', e.message); return false; }
 }
 
 /* ==================== Global Durum ==================== */
-let devices=[], deviceIndex=0, currentStream=null, currentMode=null;
-let mrzWorker=null;
-let selectedImage=null; // HTMLImageElement
-
+let devices=[], deviceIndex=0, currentStream=null;
+let selectedImage=null;
 const storeKey='tcid_records_v1';
 
 /* ==================== Depo ==================== */
@@ -153,24 +168,19 @@ function parseMRZ_TR(text){
   const L=text.trim().split(/\n+/).map(s=>s.replace(/\s+/g,'').toUpperCase());
   const l1=L[0]||'', l2=L[1]||'', l3=L[2]||'';
 
-  // 1) TCKN: l1 en sağ 11
   let tckn='';{
     const only=normalizeDigits(l1.replace(/</g,'')).replace(/\D/g,'');
     const m=only.match(/(\d{11})$/); if(m && isValidTCKN(m[1])) tckn=m[1];
   }
-  // 2) YYMMDD: l2 en sol 6
   let dogum='';{
     const six=(normalizeDigits(l2).match(/^\d{6}/)||[])[0];
     if(six){ const yy=six.slice(0,2), mm=six.slice(2,4), dd=six.slice(4,6);
       const Y=yyyyFromYY(yy), M=+mm, D=+dd;
-      if(M>=1&&M<=12&&D>=1&&D<=31) dogum=`${Y}-${mm}-${dd}`;
-    }
+      if(M>=1&&M<=12&&D>=1&&D<=31) dogum=`${Y}-${mm}-${dd}`; }
   }
-  // 3) Soyad<<Ad
   let ad='',soyad='';{
     if(l3.includes('<<')){ const [s,g]=l3.split('<<'); soyad=s.replace(/</g,' ').trim().replace(/\s+/g,' '); ad=(g||'').replace(/</g,' ').trim().replace(/\s+/g,' '); }
   }
-
   if(!(tckn||dogum||ad||soyad)) return null;
   return {tckn,dogum,ad,soyad,_score:scoreMRZ(l1,l2,l3)};
 }
@@ -180,32 +190,59 @@ function preferBack(list){
   const score=d=>{ const L=(d.label||'').toLowerCase(); let s=0; if(/back|rear|environment/.test(L)) s+=5; if(/front|user/.test(L)) s-=4; if(/camera\s*0.*back/.test(L)) s+=2; return s; };
   return list.slice().sort((a,b)=>score(b)-score(a));
 }
-async function listCameras(){ try{ const tmp=await navigator.mediaDevices.getUserMedia({video:true,audio:false}); tmp.getTracks().forEach(t=>t.stop()); }catch(_){ }
-  let all=await navigator.mediaDevices.enumerateDevices(); all=all.filter(d=>d.kind==='videoinput'); devices=preferBack(all);
-  const sel=$('#camera'); sel.innerHTML=''; devices.forEach((d,i)=>{ const o=document.createElement('option'); o.value=i; o.textContent=d.label||`Kamera ${i+1}`; sel.appendChild(o); });
-  deviceIndex=0; sel.value='0';
+async function listCameras(){
+  // İsimlerin görünmesi için bir kez izin iste
+  try{ const tmp=await navigator.mediaDevices.getUserMedia({video:true,audio:false}); tmp.getTracks().forEach(t=>t.stop()); }catch(_){ }
+  let all=await navigator.mediaDevices.enumerateDevices();
+  all=all.filter(d=>d.kind==='videoinput');
+  devices=preferBack(all);
+
+  const sel=$('#camera'); sel.innerHTML='';
+  devices.forEach((d,i)=>{ const o=document.createElement('option'); o.value=i; o.textContent=d.label||`Kamera ${i+1}`; sel.appendChild(o); });
+  deviceIndex = 0;
+  sel.value = String(deviceIndex);
 }
 async function openCamera(){
   await stopAll();
-  const dev=devices[deviceIndex]; if(!dev){ setStatus('Kamera bulunamadı.'); return false; }
+  const dev=devices[deviceIndex];
+  if(!dev){ setStatus('Kamera bulunamadı.'); return false; }
   const low=$('#lowres').checked;
-  const constraints={ video:{ deviceId:{exact:dev.deviceId}, facingMode:'environment', width: low?{ideal:1280}:{ideal:1920}, height: low?{ideal:720}:{ideal:1080}, frameRate:{ideal:30}, advanced:[{focusMode:'continuous'}]}, audio:false };
+  const constraints={ video:{
+      deviceId:{exact:dev.deviceId},
+      facingMode:'environment',
+      width: low?{ideal:1280}:{ideal:1920},
+      height: low?{ideal:720}:{ideal:1080},
+      frameRate:{ideal:30},
+      advanced:[{focusMode:'continuous'}]
+    }, audio:false };
   setStatus('Kamera açılıyor…');
   const v=$('#video');
   try{
     const stream=await navigator.mediaDevices.getUserMedia(constraints);
     currentStream=stream; v.srcObject=stream;
-    try{ await v.play(); $('#tapOverlay').style.display='none'; }catch(_){ $('#tapOverlay').style.display='flex'; $('#btnTap').onclick=()=>v.play().then(()=>$('#tapOverlay').style.display='none'); }
+    try{ await v.play(); $('#tapOverlay').style.display='none'; }
+    catch(_){ $('#tapOverlay').style.display='flex'; $('#btnTap').onclick=()=>v.play().then(()=>$('#tapOverlay').style.display='none'); }
     setStatus('Kamera açık.');
-    $('#btnSnap').disabled=false; $('#btnMRZ').disabled= !selectedImage;
+    $('#btnSnap').disabled=false;
     $('#btnStop').disabled=false;
+    // seçili foto yoksa MRZ butonu kapalı kalır
+    if(selectedImage) $('#btnMRZ').disabled=false;
     return true;
   }catch(e){ log('getUserMedia:', e.name, e.message); setStatus('Kamera açılamadı: '+e.message); return false; }
 }
 async function stopAll(){
   if(currentStream){ currentStream.getTracks().forEach(t=>t.stop()); }
-  currentStream=null; $('#btnSnap').disabled=true; $('#btnStop').disabled=true;
+  currentStream=null;
+  $('#btnSnap').disabled=true; $('#btnStop').disabled=true;
 }
+
+/* Kamera değişince hemen o kamerayı aç */
+document.addEventListener('change', async (ev)=>{
+  if(ev.target && ev.target.id==='camera'){
+    deviceIndex = +ev.target.value || 0;
+    if(devices[deviceIndex]){ await openCamera(); }
+  }
+});
 
 /* ==================== Fotoğraf alma / yükleme ==================== */
 async function takePhoto(){
@@ -215,13 +252,13 @@ async function takePhoto(){
     if('ImageCapture' in window){
       const ic=new ImageCapture(track);
       if(ic.takePhoto){ const blob=await ic.takePhoto(); return await createImageFromBlob(blob); }
-      const bitmap=await ic.grabFrame(); // fallback
+      const bitmap=await ic.grabFrame();
       const c=document.createElement('canvas'); c.width=bitmap.width; c.height=bitmap.height;
       const ctx=c.getContext('2d'); ctx.drawImage(bitmap,0,0);
-      return await createImageFromBlob(await new Promise(r=>c.toBlob(r,'image/jpeg',0.95)));
+      const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',0.95));
+      return await createImageFromBlob(blob);
     }
   }catch(e){ log('takePhoto:',e); }
-  // En kötü ihtimal: video karesi
   const v=$('#video');
   const c=document.createElement('canvas'); c.width=v.videoWidth; c.height=v.videoHeight;
   const ctx=c.getContext('2d'); ctx.drawImage(v,0,0);
@@ -237,7 +274,6 @@ function showPreview(img){
   selectedImage=img;
   const prev=$('#preview');
   const c=document.createElement('canvas'); const ctx=c.getContext('2d');
-  // daha küçük önizleme
   const maxW=900, scale=Math.min(1, maxW/img.width);
   c.width=Math.floor(img.width*scale); c.height=Math.floor(img.height*scale);
   ctx.drawImage(img,0,0,c.width,c.height);
@@ -247,7 +283,6 @@ function showPreview(img){
 
 /* ==================== Görüntü işleme ==================== */
 function cropMRZBandFromImage(img){
-  // Alt %34'ü al
   const iw=img.width, ih=img.height, bandH=Math.floor(ih*0.34), bandY=ih - bandH;
   const scale=2;
   const c=document.createElement('canvas'), ctx=c.getContext('2d');
@@ -304,45 +339,64 @@ function rotateToCanvas(srcCanvas, angleDeg){
   return tmp;
 }
 
-/* ==================== Tesseract Worker ==================== */
-async function ensureMRZWorker(){
-  if(mrzWorker) return true;
-  const ok=await loadTesseract(); if(!ok){ setStatus('Tesseract yüklenemedi.'); return false; }
-  mrzWorker = Tesseract; // tek API kullanımı
-  return true;
+/* ==================== MRZ OCR ==================== */
+function tessPaths(){
+  const base = guessTessBaseFromScript();
+  return {
+    workerPath: base + 'worker.min.js',
+    corePathSIMD: base + 'tesseract-core-simd.wasm.js',
+    corePath: base + 'tesseract-core.wasm.js',
+    langPath: base + 'lang'
+  };
 }
 async function ocrSingleLine(canvas, whitelist){
-  // psm 7 + whitelist ile tek satır OCR
-  const r = await Tesseract.recognize(canvas,'eng', {
-    tessedit_pageseg_mode: '7',
-    tessedit_char_whitelist: whitelist
-  });
-  const text = (r?.data?.text||'').toUpperCase().replace(/[^\dA-Z<\n ]/g,'').trim();
-  const conf = r?.data?.confidence || 0;
-  return {text, conf};
+  const p = tessPaths();
+  // Önce SIMD çekirdeği, olmazsa normal çekirdek
+  try{
+    const r = await Tesseract.recognize(canvas,'eng', {
+      tessedit_pageseg_mode: '7',
+      tessedit_char_whitelist: whitelist,
+      workerPath: p.workerPath,
+      corePath: p.corePathSIMD,
+      langPath: p.langPath
+    });
+    const text = (r?.data?.text||'').toUpperCase().replace(/[^\dA-Z<\n ]/g,'').trim();
+    const conf = r?.data?.confidence || 0;
+    return {text, conf};
+  }catch(e1){
+    log('SIMD çekirdek olmadı, normal çekirdek deneniyor…');
+    const r = await Tesseract.recognize(canvas,'eng', {
+      tessedit_pageseg_mode: '7',
+      tessedit_char_whitelist: whitelist,
+      workerPath: p.workerPath,
+      corePath: p.corePath,
+      langPath: p.langPath
+    });
+    const text = (r?.data?.text||'').toUpperCase().replace(/[^\dA-Z<\n ]/g,'').trim();
+    const conf = r?.data?.confidence || 0;
+    return {text, conf};
+  }
 }
 
-/* ==================== Fotoğraftan MRZ Oku ==================== */
+/* Fotoğraftan MRZ Oku */
 async function runMRZFromSelected(){
   if(!selectedImage){ alert('Önce fotoğraf seç veya çek.'); return; }
+  const ok = await loadTesseract();
+  if(!ok){ setStatus('Tesseract yüklenemedi. Vendor’a koyun: /vendor/tesseract/tesseract.min.js'); return; }
   setStatus('MRZ işleniyor (fotoğraf)…');
 
-  // 1) bandı kırp
   const band = cropMRZBandFromImage(selectedImage);
   const bctx = band.getContext('2d');
   sharpen(bctx, band.width, band.height);
   adaptiveMeanThreshold(bctx, band.width, band.height, 25, 10);
 
-  // 2) -2°..+2° küçük açı aralığı → en iyi skor
   const angles=[-2,-1, -0.5, 0, 0.5, 1, 2];
   let bestText='', bestScore=-1;
 
   for(const a of angles){
     const rot = rotateToCanvas(band, a);
-    // 3 satırı kabaca eşit böl
     const h = Math.floor(rot.height/3);
 
-    // her satır için 2 geçiş: (A-Z0-9<) ve (A-Z0-9)
     async function getLine(y, scale=1.9){
       const c=document.createElement('canvas'), ctx=c.getContext('2d');
       c.width=Math.max(900, rot.width); c.height=Math.floor(h*scale);
@@ -350,7 +404,6 @@ async function runMRZFromSelected(){
 
       const pass1 = await ocrSingleLine(c, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<');
       const pass2 = await ocrSingleLine(c, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789');
-      // basit seçim: daha uzun + daha yüksek conf
       const s1 = (pass1.conf||0) + pass1.text.length*1.5;
       const s2 = (pass2.conf||0) + pass2.text.length*1.5;
       return s2>=s1 ? pass2.text : pass1.text;
@@ -378,7 +431,7 @@ async function runMRZFromSelected(){
     fillForm(mrz);
     setStatus('MRZ okundu (fotoğraf).');
   }else{
-    setStatus('Metin bulundu ama ayrıştırılamadı — açı/ışık.'); 
+    setStatus('Metin bulundu ama ayrıştırılamadı — açı/ışık.');
   }
 }
 
@@ -402,10 +455,8 @@ $('#file').addEventListener('change', async ev=>{
 });
 
 $('#btnMRZ').addEventListener('click', async ()=>{
-  try{
-    const ok = await ensureMRZWorker(); if(!ok) return;
-    await runMRZFromSelected();
-  }catch(e){ log('mrz:',e); setStatus('MRZ okunamadı: '+(e.message||e)); }
+  try{ await runMRZFromSelected(); }
+  catch(e){ log('mrz:',e); setStatus('MRZ okunamadı: '+(e.message||e)); }
 });
 
 $('#btnSave').addEventListener('click', ()=>{
