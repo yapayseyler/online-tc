@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Online TC — Hızlı MRZ (Satır Satır) + Vendor ZXing + Kayıt/TXT</title>
+<title>Online TC — Hızlı MRZ (Stabil) + Vendor ZXing + Kayıt/TXT</title>
 <style>
   :root{--bg:#0f1115;--card:#171923;--ink:#e8e8ea;--muted:#9aa0a6;--acc:#4f8cff}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
@@ -37,7 +37,7 @@
 <div class="wrap">
   <!-- ÜST KONTROLLER -->
   <div class="card">
-    <h1>Online TC — Barkod & MRZ Okuyucu <span class="pill">Hızlandırılmış MRZ</span></h1>
+    <h1>Online TC — Barkod & MRZ Okuyucu <span class="pill">Stabil MRZ</span></h1>
     <div class="row" style="margin-top:6px">
       <button id="btnOpen">Kamerayı Aç</button>
       <button id="btnBarcode" class="secondary" disabled>Barkod Tara</button>
@@ -123,7 +123,7 @@ window.onerror = (m,s,l,c,e)=>{ log('window.onerror:', m, s+':'+l, e && (e.stack
 window.onunhandledrejection = ev=>{ log('unhandledrejection:', ev.reason && (ev.reason.stack||ev.reason)); };
 
 /* ==================== KÜTÜPHANELER ==================== */
-/* İSTEK: Barkod sadece vendor. Birden fazla yerel isim deniyoruz. */
+/* Barkod: sadece vendor/yerel dosya */
 async function loadZXingVendorOnly(){
   if(window.ZXingBrowser) return true;
   const localCandidates = [
@@ -147,7 +147,7 @@ async function loadZXingVendorOnly(){
   return false;
 }
 
-/* MRZ için Tesseract: CDN→vendor fallback (worker reuse, hız için şart) */
+/* MRZ için Tesseract: CDN→vendor fallback (worker reuse) */
 async function loadTesseract(){
   if(window.Tesseract) return true;
   const urls = [
@@ -177,6 +177,29 @@ const storeKey = 'tcid_records_v1';
 
 /* Tesseract worker (tek işçi, tekrar kullan) */
 let mrzWorker=null, mrzBusy=false;
+
+/* Stabilizasyon belleği */
+const stabWin = { // son N frame
+  N: 5,
+  l1: [],
+  l2: [],
+  l3: []
+};
+function pushStab(key, val){
+  if(!val) return;
+  const arr = stabWin[key];
+  arr.push(val);
+  if(arr.length>stabWin.N) arr.shift();
+}
+function majority(arr){
+  const map=new Map();
+  arr.forEach(s=>map.set(s,(map.get(s)||0)+1));
+  let best='', cnt=0;
+  for(const [s,c] of map.entries()){
+    if(c>cnt || (c===cnt && s.length>best.length)){ best=s; cnt=c; }
+  }
+  return best;
+}
 
 /* ==================== Kayıt Deposu ==================== */
 function loadRecords(){ try{ return JSON.parse(localStorage.getItem(storeKey)||'[]'); }catch(_){ return []; } }
@@ -212,17 +235,60 @@ function toggleExportButtons(){
 }
 renderTable(); toggleExportButtons();
 
-/* ==================== MRZ / Barkod Ayrıştırıcılar ==================== */
-/* Barkoddan/ham metinden TCKN yakalama (11 hane) */
-function extractTCKNAnywhere(text){
-  const m = (text||'').replace(/\D/g,'').match(/(\d{11})/);
-  return m ? m[1] : '';
+/* ==================== Yardımcı Doğrulamalar ==================== */
+function normalizeDigits(s){
+  if(!s) return s;
+  return s
+    .replace(/O/g,'0').replace(/D/g,'0')
+    .replace(/I/g,'1').replace(/L/g,'1')
+    .replace(/Z/g,'2')
+    .replace(/S/g,'5')
+    .replace(/B/g,'8')
+    .replace(/G/g,'6');
+}
+function isValidDateYYYYMMDD(yy,mm,dd){
+  const year = +yy <= 24 ? (2000 + +yy) : (1900 + +yy);
+  const m = +mm, d = +dd;
+  if(m<1||m>12||d<1||d>31) return null;
+  const dateStr = `${year}-${mm}-${dd}`;
+  const dt = new Date(dateStr);
+  if(isNaN(dt.getTime())) return null;
+  if(dt.getFullYear()!==year || (dt.getMonth()+1)!==m || dt.getDate()!==d) return null;
+  return dateStr;
+}
+function isValidTCKN(num){
+  if(!/^\d{11}$/.test(num)) return false;
+  if(num[0]==='0') return false;
+  const digits = num.split('').map(n=>+n);
+  const oddSum = digits[0]+digits[2]+digits[4]+digits[6]+digits[8];
+  const evenSum = digits[1]+digits[3]+digits[5]+digits[7];
+  const d10 = ((oddSum*7 - evenSum) % 10 + 10) % 10;
+  if(d10 !== digits[9]) return false;
+  const d11 = (digits.slice(0,10).reduce((a,b)=>a+b,0)) % 10;
+  if(d11 !== digits[10]) return false;
+  return true;
 }
 
-/* MRZ (kriterlerinize göre):
-   - 1. satır: en sağ 11 hane → TCKN
-   - 2. satır: en sol 6 rakam → YYMMDD (yıl/ay/gün)
-   - 3. satır: SOYAD<<AD(AD2...)  */
+/* ==================== MRZ / Barkod Ayrıştırıcılar ==================== */
+function extractTCKNAnywhere(text){
+  const m = (text||'').replace(/\D/g,'').match(/(\d{11})/);
+  if(!m) return '';
+  const cand = m[1];
+  return isValidTCKN(cand) ? cand : '';
+}
+
+/* MRZ parse + skorlayıcı */
+function scoreMRZ(l1,l2,l3){
+  let score = 0;
+  if(l3 && l3.includes('<<')) score += 8;
+  if(l2 && /^\d{6}/.test(l2)) score += 6;
+  if(l1 && /\d{11}$/.test(l1.replace(/</g,''))) score += 6;
+  if(l1 && l1.length>20) score += 2;
+  if(l2 && l2.length>10) score += 2;
+  if(l3 && l3.length>10) score += 2;
+  return score;
+}
+/* metin → obj */
 function parseMRZ_TR(text){
   if(!text) return null;
   const lines = text.trim().split(/\n+/).map(s=>s.replace(/\s+/g,'').toUpperCase());
@@ -232,17 +298,21 @@ function parseMRZ_TR(text){
 
   let tckn = '';
   if(l1){
-    const r = l1.replace(/</g,'').match(/(\d{11})$/);
-    if(r) tckn = r[1];
+    const r = l1.replace(/</g,'').toUpperCase();
+    const digits = normalizeDigits(r).replace(/\D/g,'');
+    if(/\d{11}$/.test(digits)){
+      const cand = digits.slice(-11);
+      if(isValidTCKN(cand)) tckn = cand;
+    }
   }
 
   let dogum = '';
   if(l2){
-    const six = (l2.match(/^\d{6}/) || [])[0];
+    const six = (l2.match(/^\d{6}/) || [])[0] || normalizeDigits(l2).match(/^\d{6}/)?.[0];
     if(six){
       const yy = six.slice(0,2), mm = six.slice(2,4), dd = six.slice(4,6);
-      const year = +yy <= 24 ? ('20'+yy) : ('19'+yy);
-      if(+mm>=1 && +mm<=12 && +dd>=1 && +dd<=31){ dogum = `${year}-${mm}-${dd}`; }
+      const ok = isValidDateYYYYMMDD(yy,mm,dd);
+      if(ok) dogum = ok;
     }
   }
 
@@ -253,8 +323,9 @@ function parseMRZ_TR(text){
     ad = (g||'').replace(/</g,' ').trim().replace(/\s+/g,' ');
   }
 
-  if(!(ad||soyad||dogum||tckn)) return null;
-  return { ad, soyad, dogum, tckn };
+  const basicOk = (ad||soyad||dogum||tckn);
+  if(!basicOk) return null;
+  return { ad, soyad, dogum, tckn, l1, l2, l3, _score: scoreMRZ(l1,l2,l3) };
 }
 function fillForm(obj){
   if(!obj) return;
@@ -407,7 +478,53 @@ async function startBarcode(){
   }, 300);
 }
 
-/* ==================== MRZ (Hızlı: satır satır, tek worker, parametreli) ==================== */
+/* ==================== Basit görüntü işleme ==================== */
+/* gri + global ikili (eşik) */
+function binarize(ctx, w, h, thr=140){
+  const img=ctx.getImageData(0,0,w,h), d=img.data;
+  for(let i=0;i<d.length;i+=4){
+    const g=(d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114)|0;
+    const bw=g>thr?255:0; d[i]=d[i+1]=d[i+2]=bw;
+  }
+  ctx.putImageData(img,0,0);
+}
+/* hafif keskinleştirme (unsharp-ish) */
+function sharpen(ctx, w, h){
+  const img=ctx.getImageData(0,0,w,h), d=img.data.slice();
+  const out=ctx.getImageData(0,0,w,h), o=out.data;
+  const off=[-w*4,0,w*4,-4,4]; // yukarı, merkez, aşağı, sol, sağ
+  for(let i=0;i<o.length;i+=4){
+    let sum = 0, cnt=0;
+    for(const k of off){
+      const j=i+k;
+      if(j>=0 && j<d.length){
+        const g=(d[j]*0.299 + d[j+1]*0.587 + d[j+2]*0.114)|0;
+        sum+=g; cnt++;
+      }
+    }
+    const center=(d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114)|0;
+    let val = Math.min(255, Math.max(0, center*1.5 - (sum/cnt)*0.5));
+    o[i]=o[i+1]=o[i+2]=val; o[i+3]=255;
+  }
+  ctx.putImageData(out,0,0);
+}
+
+/* Bir satırı OCR et (confidence ile) */
+async function ocrWithWorker(canvas, params){
+  if(mrzWorker==='legacy'){
+    const r = await Tesseract.recognize(canvas,'eng',params||{});
+    const text = (r.data && r.data.text) ? r.data.text : '';
+    const conf = (r.data && typeof r.data.confidence==='number') ? r.data.confidence : 0;
+    return { text, conf };
+  }
+  if(params) await mrzWorker.setParameters(params);
+  const r = await mrzWorker.recognize(canvas);
+  const text = (r.data && r.data.text) ? r.data.text : '';
+  const conf = (r.data && typeof r.data.confidence==='number') ? r.data.confidence : 0;
+  return { text, conf };
+}
+
+/* ==================== MRZ (Stabil: çoklu eşik + vote + skor) ==================== */
 async function ensureMRZWorker(){
   if(mrzWorker) return true;
   const okLib = await loadTesseract();
@@ -418,7 +535,6 @@ async function ensureMRZWorker(){
       await mrzWorker.load();
       await mrzWorker.loadLanguage('eng');
       await mrzWorker.initialize('eng');
-      // Varsayılan: tek satır odaklı (psm 7), harf/rakam/<
       await mrzWorker.setParameters({
         tessedit_pageseg_mode: '7',
         tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<'
@@ -426,33 +542,11 @@ async function ensureMRZWorker(){
       log('MRZ worker hazır.');
       return true;
     }else{
-      // Eski API fallback (daha yavaş)
       mrzWorker = 'legacy';
       log('Tesseract legacy modda çalışacak.');
       return true;
     }
   }catch(e){ log('MRZ worker hata:', e); return false; }
-}
-
-/* Basit görüntü işleme: gri + eşik */
-function binarize(ctx, w, h, thr=140){
-  const img=ctx.getImageData(0,0,w,h), d=img.data;
-  for(let i=0;i<d.length;i+=4){
-    const g=(d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114)|0;
-    const bw=g>thr?255:0; d[i]=d[i+1]=d[i+2]=bw;
-  }
-  ctx.putImageData(img,0,0);
-}
-
-/* Bir satırı OCR et (worker ile) */
-async function ocrWithWorker(canvas, params){
-  if(mrzWorker==='legacy'){
-    const { data:{ text } } = await Tesseract.recognize(canvas,'eng',params||{});
-    return text||'';
-  }
-  if(params) await mrzWorker.setParameters(params);
-  const { data:{ text } } = await mrzWorker.recognize(canvas);
-  return text||'';
 }
 
 async function startMRZ(){
@@ -463,79 +557,112 @@ async function startMRZ(){
   currentMode='mrz'; showScanline(true); setStatus('MRZ taranıyor…');
 
   const v=$('#video');
-  // ana band + 3 satır kırpımı (daha az piksel → daha hızlı)
   const bandCanvas=document.createElement('canvas'), bctx=bandCanvas.getContext('2d');
   const l1c=document.createElement('canvas'), l1ctx=l1c.getContext('2d');
   const l2c=document.createElement('canvas'), l2ctx=l2c.getContext('2d');
   const l3c=document.createElement('canvas'), l3ctx=l3c.getContext('2d');
 
   mrzBusy=false;
-  let lastGood={l1:'',l2:'',l3:''};  // kısa hafıza (stabilizasyon için)
+  stabWin.l1=[]; stabWin.l2=[]; stabWin.l3=[];
 
   function prepLine(ctxDst, src, sx, sy, sw, sh, scale=2, thr=140){
-    ctxDst.canvas.width = Math.max(600, Math.floor(sw*scale)); // min genişlik → tesseract için netlik
+    ctxDst.canvas.width = Math.max(700, Math.floor(sw*scale));
     ctxDst.canvas.height = Math.floor(sh*scale);
     ctxDst.drawImage(src, sx, sy, sw, sh, 0, 0, ctxDst.canvas.width, ctxDst.canvas.height);
+    // hafif keskin + ikili
+    sharpen(ctxDst, ctxDst.canvas.width, ctxDst.canvas.height);
     binarize(ctxDst, ctxDst.canvas.width, ctxDst.canvas.height, thr);
   }
 
-  function stabilize(newTxt, oldTxt){
-    // küçük hataları tolere et: uzunluk yakınsa ve yeni boş değilse yeniyle güncelle
-    if(!newTxt) return oldTxt;
-    if(!oldTxt) return newTxt;
-    if(Math.abs(newTxt.length - oldTxt.length) <= 3) return newTxt;
-    return newTxt.length > oldTxt.length ? newTxt : oldTxt;
+  function chooseBestVariant(ctx, sx, sy, sw, sh, scale, thresholds, params){
+    // Birden çok eşik dene, en iyi skorlu MRZ parçasını seç
+    const cand = [];
+    for(const thr of thresholds){
+      const tmp = document.createElement('canvas');
+      const tctx = tmp.getContext('2d');
+      tctx.canvas.width = Math.max(700, Math.floor(sw*scale));
+      tctx.canvas.height = Math.floor(sh*scale);
+      tctx.drawImage(ctx.canvas, sx, sy, sw, sh, 0, 0, tctx.canvas.width, tctx.canvas.height);
+      sharpen(tctx, tctx.canvas.width, tctx.canvas.height);
+      binarize(tctx, tctx.canvas.width, tctx.canvas.height, thr);
+      cand.push({canvas: tmp, thr});
+    }
+    return cand;
   }
+
+  const thresholds = [110,125,140,160];
 
   const tick = async ()=>{
     if(currentMode!=='mrz' || mrzBusy || !v.videoWidth){ return; }
     mrzBusy=true;
     try{
       const vw=v.videoWidth, vh=v.videoHeight;
-      const bandH = Math.floor(vh*0.34), bandY = vh - bandH;  // alt ~%34
+      const bandH = Math.floor(vh*0.34), bandY = vh - bandH;
       const scaleBand = 2;
 
       // band hazırlığı
       bandCanvas.width = Math.floor(vw*scaleBand);
       bandCanvas.height = Math.floor(bandH*scaleBand);
       bctx.drawImage(v, 0, bandY, vw, bandH, 0,0, bandCanvas.width, bandCanvas.height);
+
+      // kaba ikili (band genel)
       binarize(bctx, bandCanvas.width, bandCanvas.height, 135);
 
       // 3 satırı yaklaşık konumdan al (eşit böl)
       const lineH = Math.floor(bandCanvas.height/3);
-      prepLine(l1ctx, bandCanvas, 0, 0*lineH, bandCanvas.width, lineH, 1.6, 135);
-      prepLine(l2ctx, bandCanvas, 0, 1*lineH, bandCanvas.width, lineH, 1.6, 135);
-      prepLine(l3ctx, bandCanvas, 0, 2*lineH, bandCanvas.width, lineH, 1.8, 135);
+      // her satır için çoklu eşik varyantları üret
+      const vL1 = chooseBestVariant(bctx, 0, 0*lineH, bandCanvas.width, lineH, 1.8, thresholds);
+      const vL2 = chooseBestVariant(bctx, 0, 1*lineH, bandCanvas.width, lineH, 1.8, thresholds);
+      const vL3 = chooseBestVariant(bctx, 0, 2*lineH, bandCanvas.width, lineH, 2.0, thresholds);
 
-      // Sırayla: l2 (doğum, sayısal hızlı) → l3 (isim) → l1 (tckn)
-      const l2 = (await ocrWithWorker(l2c, {
-        tessedit_pageseg_mode:'7',
-        tessedit_char_whitelist:'0123456789<',
-        classify_bln_numeric_mode:'1'
-      })).toUpperCase().replace(/[^\d<\n]/g,'').trim();
+      // OCR param setleri
+      const pNum = {tessedit_pageseg_mode:'7',tessedit_char_whitelist:'0123456789<', classify_bln_numeric_mode:'1'};
+      const pAlpha = {tessedit_pageseg_mode:'7',tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ<'};
+      const pMix = {tessedit_pageseg_mode:'7',tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<'};
 
-      const l3 = (await ocrWithWorker(l3c, {
-        tessedit_pageseg_mode:'7',
-        tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ<'
-      })).toUpperCase().replace(/[^A-Z<\n]/g,'').trim();
+      // her varyant için OCR → en iyi skoru seç
+      async function bestOf(variants, params, postProc){
+        let best={text:'',conf:0};
+        for(const {canvas,thr} of variants){
+          const {text, conf} = await ocrWithWorker(canvas, params);
+          const clean = (postProc(text)||'').toUpperCase().trim();
+          const effective = clean.replace(/[^\dA-Z<\n]/g,'');
+          if(effective.length===0) continue;
+          // basit kalite metriği: conf + uzunluk
+          const quality = (conf||0) + effective.length*1.5;
+          if(quality > (best.q||-1)){
+            best = {text: effective, conf, q: quality};
+          }
+        }
+        return best.text;
+      }
+      const l2 = await bestOf(vL2, pNum, t=>t.replace(/[^\d<\n]/g,''));
+      const l3 = await bestOf(vL3, pAlpha, t=>t.replace(/[^A-Z<\n]/g,''));
+      const l1 = await bestOf(vL1, pMix, t=>t.replace(/[^\dA-Z<\n]/g,''));
 
-      const l1 = (await ocrWithWorker(l1c, {
-        tessedit_pageseg_mode:'7',
-        tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<'
-      })).toUpperCase().replace(/[^\dA-Z<\n]/g,'').trim();
+      // stabilizasyon havuzuna at
+      pushStab('l1', l1); pushStab('l2', l2); pushStab('l3', l3);
 
-      // stabilize
-      lastGood.l1 = stabilize(l1, lastGood.l1);
-      lastGood.l2 = stabilize(l2, lastGood.l2);
-      lastGood.l3 = stabilize(l3, lastGood.l3);
+      // majority vote
+      const s1 = majority(stabWin.l1);
+      const s2 = majority(stabWin.l2);
+      const s3 = majority(stabWin.l3);
 
-      const cleaned = [lastGood.l1,lastGood.l2,lastGood.l3].filter(Boolean).join('\n');
+      const cleaned = [s1,s2,s3].filter(Boolean).join('\n');
       if(cleaned.replace(/\s/g,'').length>20){
-        showScanline(false);
         const mrz = parseMRZ_TR(cleaned);
         if(mrz){
-          mrz.raw = cleaned;
-          onScan(cleaned, 'mrz', mrz);
+          // skor bazlı “tamamlandı” eşiği
+          const okScore = mrz._score >= 12 && (mrz.tckn || mrz.dogum);
+          if(okScore){
+            showScanline(false);
+            mrz.raw = cleaned;
+            onScan(cleaned, 'mrz', mrz);
+            setStatus('MRZ okundu.');
+          }else{
+            setStatus('MRZ kısmen tanındı, netleştiriliyor…');
+            $('#raw').value = cleaned;
+          }
         }else{
           setStatus('MRZ yakalandı; ayrıştırılamadı (açı/ışık).');
           $('#raw').value = cleaned;
@@ -550,8 +677,8 @@ async function startMRZ(){
     }
   };
 
-  // Daha sık ama çakışmasız (busy bayrağı) → akıcı ve hızlı
-  scanTimer = setInterval(tick, 800);
+  // Daha sık ama çakışmasız (busy bayrağı)
+  scanTimer = setInterval(tick, 600);
 }
 
 /* ==================== UI Olayları ==================== */
@@ -584,7 +711,7 @@ $('#btnExport').addEventListener('click', ()=>{
   if(!list.length){ alert('Dışa aktarılacak kayıt yok.'); return; }
   const header = 'TCKN;AD;SOYAD;DOGUM_TARIHI;RAW\n';
   const lines = list.map(r => [r.tckn||'',r.ad||'',r.soyad||'',r.dogum||'', (r.raw||'').replace(/\n/g,' ')].join(';'));
-  const blob = new Blob([header + lines.join('\n')], {type:'text/plain;charset=utf-8'});
+  const blob = new Blob(['\ufeff'+header + lines.join('\n')], {type:'text/plain;charset=utf-8'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = 'kimlik_kayitlari.txt';
