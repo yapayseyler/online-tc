@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Online TC — Stabil MRZ + Vendor ZXing + Kayıt/TXT (CORS Fix)</title>
+<title>Online TC — MRZ (Kurala Göre) + ZXing + TXT</title>
 <style>
   :root{--bg:#0f1115;--card:#171923;--ink:#e8e8ea;--muted:#9aa0a6;--acc:#4f8cff}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
@@ -36,7 +36,7 @@
 <body>
 <div class="wrap">
   <div class="card">
-    <h1>Online TC — Barkod & MRZ Okuyucu <span class="pill">Stabil + CORS Güvenli</span></h1>
+    <h1>Online TC — Barkod & MRZ <span class="pill">Kurala Göre MRZ</span></h1>
     <div class="row" style="margin-top:6px">
       <button id="btnOpen">Kamerayı Aç</button>
       <button id="btnBarcode" class="secondary" disabled>Barkod Tara</button>
@@ -54,7 +54,7 @@
       <select id="camera"></select>
       <label><input type="checkbox" id="lowres"> Düşük çözünürlük (1280×720)</label>
     </div>
-    <div class="video-wrap" id="videoWrap">
+    <div class="video-wrap">
       <video id="video" autoplay playsinline muted></video>
       <div class="overlay" id="tapOverlay"><button id="btnTap">Videoyu Başlat</button></div>
       <div class="scanline" id="scanline"></div>
@@ -64,631 +64,238 @@
   <div class="card">
     <h1>Sonuç / Düzenle</h1>
     <div class="grid" style="margin-top:8px">
-      <div>
-        <label>TC Kimlik No (varsa)</label>
-        <input id="tckn" placeholder="11 haneli" />
-      </div>
-      <div>
-        <label>Ad</label>
-        <input id="ad" />
-      </div>
-      <div>
-        <label>Soyad</label>
-        <input id="soyad" />
-      </div>
-      <div>
-        <label>Doğum Tarihi (YYYY-MM-DD)</label>
-        <input id="dogum" placeholder="1990-01-31" />
-      </div>
+      <div><label>TC Kimlik No</label><input id="tckn" placeholder="11 haneli"/></div>
+      <div><label>Ad</label><input id="ad"/></div>
+      <div><label>Soyad</label><input id="soyad"/></div>
+      <div><label>Doğum (YYYY-MM-DD)</label><input id="dogum" placeholder="1990-01-31"/></div>
     </div>
-    <label style="margin-top:10px;display:block">Ham veri (okunan metin)</label>
+    <label style="margin-top:10px;display:block">Ham veri</label>
     <textarea id="raw" rows="4" spellcheck="false"></textarea>
     <div class="row" style="margin-top:10px">
       <button id="btnSave">Kaydet</button>
-      <span class="muted">Kaydetmeden önce bilgileri kontrol edip düzeltebilirsiniz.</span>
+      <span class="muted">Kaydetmeden önce kontrol edin.</span>
     </div>
   </div>
 
   <div class="card">
     <h1>Kayıtlar</h1>
-    <div class="muted" style="margin-bottom:6px">Veriler cihazınızda (localStorage) tutulur.</div>
-    <table id="tbl">
-      <thead>
-        <tr><th>#</th><th>TCKN</th><th>Ad</th><th>Soyad</th><th>Doğum</th><th>Sil</th></tr>
-      </thead>
-      <tbody></tbody>
-    </table>
+    <div class="muted" style="margin-bottom:6px">Veriler localStorage’da tutulur.</div>
+    <table id="tbl"><thead><tr><th>#</th><th>TCKN</th><th>Ad</th><th>Soyad</th><th>Doğum</th><th>Sil</th></tr></thead><tbody></tbody></table>
   </div>
 
   <div class="card">
-    <details>
-      <summary style="cursor:pointer">Teşhis Günlüğü</summary>
-      <pre id="log"></pre>
-    </details>
+    <details><summary style="cursor:pointer">Teşhis Günlüğü</summary><pre id="log"></pre></details>
   </div>
 </div>
 
 <script>
 /* ==================== Yardımcılar / Log ==================== */
 const $ = s=>document.querySelector(s);
-const log = (...a)=>{
-  const t=a.map(x=>{
-    if(x instanceof Error){ return (x.stack||x.message||String(x)); }
-    if(typeof x==='object'){ try{ return JSON.stringify(x); }catch(_){ return String(x); } }
-    return String(x);
-  }).join(' ');
-  $('#log').textContent += t + "\n";
-  console.log(...a);
-};
+const log = (...a)=>{ const t=a.map(x=>x instanceof Error?(x.stack||x):typeof x==='object'?JSON.stringify(x):String(x)).join(' '); $('#log').textContent += t + "\n"; console.log(...a); };
 const setStatus = t => $('#status').textContent = t;
 const showScanline = b => $('#scanline').style.display = b ? 'block' : 'none';
+window.addEventListener('error', e=>{ log('window.error:', {msg:e.message,file:e.filename,line:e.lineno,col:e.colno}); });
+window.addEventListener('unhandledrejection', ev=>{ log('unhandledrejection:', ev.reason && (ev.reason.stack||ev.reason)); });
 
-/* “Script error.” vakaları için ayrıntılı dinleyici */
-window.addEventListener('error', (e)=>{
-  // e.filename boş ve mesaj “Script error.” ise CORS kaynaklıdır.
-  log('window.error:', {message:e.message, file:e.filename, line:e.lineno, col:e.colno, error:(e.error && (e.error.stack||e.error))});
-});
-window.addEventListener('unhandledrejection', ev=>{
-  const r = ev.reason;
-  log('unhandledrejection:', r && (r.stack||r.message||r));
-});
-
-/* Güvenli script loader (CORS ayrıntı) */
-function loadScript(url){
-  return new Promise((resolve,reject)=>{
-    const s=document.createElement('script');
-    s.src=url; s.async=true; s.crossOrigin='anonymous';
-    s.onload=()=>resolve({ok:true,url});
-    s.onerror=(ev)=>reject(new Error('Script yüklenemedi: '+url));
-    document.head.appendChild(s);
-  });
-}
-
-/* ==================== KÜTÜPHANELER ==================== */
-/* ZXing: vendor/yerel (CORS sorunsuz) */
+/* ==================== Kütüphane yükleyiciler ==================== */
+function loadScript(url){ return new Promise((res,rej)=>{ const s=document.createElement('script'); s.src=url; s.async=true; s.crossOrigin='anonymous'; s.onload=()=>res(); s.onerror=()=>rej(new Error('yüklenemedi: '+url)); document.head.appendChild(s); }); }
 async function loadZXingVendorOnly(){
   if(window.ZXingBrowser) return true;
-  const localCandidates = [
-    '/vendor/zxing-browser-0.1.4.min.js',
-    '/vendor/zxing-browser.min.js',
-    './zxing-browser-0.1.4.min.js',
-    './zxing-browser.min.js',
-    './zxing.min.js'
-  ];
-  for(const url of localCandidates){
-    try{
-      await loadScript(url);
-      log('ZXing vendor yüklendi:', url);
-      if(window.ZXingBrowser) return true;
-    }catch(err){ log('ZXing vendor bulunamadı:', url, err.message); }
+  for(const u of ['/vendor/zxing-browser-0.1.4.min.js','./zxing-browser-0.1.4.min.js','./zxing-browser.min.js']){
+    try{ await loadScript(u); if(window.ZXingBrowser) return true; }catch(e){ log('ZXing deneme:', u, e.message); }
   }
   return false;
 }
-
-/* Tesseract: VENDOR ÖNCE! (aynı origin) → CDN fallback */
 async function loadTesseract(){
   if(window.Tesseract) return true;
-  const vendor = [
-    '/vendor/tesseract/tesseract.min.js',
-    './vendor/tesseract/tesseract.min.js'
-  ];
-  const cdn = [
-    'https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js',
-    'https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/4.0.2/tesseract.min.js',
-    'https://unpkg.com/tesseract.js@4.0.2/dist/tesseract.min.js'
-  ];
-  const all = [...vendor, ...cdn];
-  for(const url of all){
-    try{
-      await loadScript(url);
-      log('Tesseract yüklendi:', url);
-      return true;
-    }catch(err){ log('Tesseract denemesi başarısız:', url, err.message); }
+  for(const u of ['/vendor/tesseract/tesseract.min.js','https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js']){
+    try{ await loadScript(u); return true; }catch(e){ log('Tesseract deneme:', u, e.message); }
   }
   return false;
 }
 
-/* ==================== Durum / Global ==================== */
-let devices=[], deviceIndex=0, currentStream=null, currentMode=null; // 'barcode' | 'mrz'
+/* ==================== Global durum ==================== */
+let devices=[], deviceIndex=0, currentStream=null, currentMode=null;
 let scanTimer=null, codeReader=null;
-const storeKey = 'tcid_records_v1';
+const storeKey='tcid_records_v1';
 let mrzWorker=null, mrzBusy=false;
 
-/* Stabilizasyon belleği */
-const stabWin = { N: 5, l1: [], l2: [], l3: [] };
-function pushStab(key, val){ if(!val) return; const a=stabWin[key]; a.push(val); if(a.length>stabWin.N) a.shift(); }
-function majority(arr){ const m=new Map(); arr.forEach(s=>m.set(s,(m.get(s)||0)+1)); let best='',cnt=0; for(const [s,c] of m){ if(c>cnt || (c===cnt && s.length>best.length)){ best=s; cnt=c; } } return best; }
+/* Stabilizasyon penceresi */
+const stab={N:5,l1:[],l2:[],l3:[]};
+function pushStab(k,v){ if(!v) return; const a=stab[k]; a.push(v); if(a.length>stab.N) a.shift(); }
+function majority(a){ const m=new Map(); a.forEach(s=>m.set(s,(m.get(s)||0)+1)); let b='',c=0; for(const [s,n] of m){ if(n>c || (n===c && s.length>b.length)){ b=s;c=n; } } return b; }
 
-/* ==================== Kayıt Deposu ==================== */
+/* ==================== Depo ==================== */
 function loadRecords(){ try{ return JSON.parse(localStorage.getItem(storeKey)||'[]'); }catch(_){ return []; } }
-function saveRecords(list){ localStorage.setItem(storeKey, JSON.stringify(list||[])); renderTable(); toggleExportButtons(); }
+function saveRecords(l){ localStorage.setItem(storeKey, JSON.stringify(l||[])); renderTable(); toggleExportButtons(); }
 function renderTable(){
-  const tbody = document.querySelector('#tbl tbody');
-  const list = loadRecords();
-  tbody.innerHTML = '';
-  list.forEach((r,i)=>{
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td>${i+1}</td>
-      <td>${r.tckn||''}</td>
-      <td>${r.ad||''}</td>
-      <td>${r.soyad||''}</td>
-      <td>${r.dogum||''}</td>
-      <td><button class="danger" data-i="${i}">Sil</button></td>`;
-    tbody.appendChild(tr);
-  });
-  tbody.querySelectorAll('button[data-i]').forEach(b=>{
-    b.onclick = () => {
-      const i = +b.dataset.i;
-      const list = loadRecords();
-      list.splice(i,1);
-      saveRecords(list);
-    };
-  });
+  const tb=$('#tbl tbody'); const list=loadRecords(); tb.innerHTML='';
+  list.forEach((r,i)=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td>${i+1}</td><td>${r.tckn||''}</td><td>${r.ad||''}</td><td>${r.soyad||''}</td><td>${r.dogum||''}</td><td><button class="danger" data-i="${i}">Sil</button></td>`; tb.appendChild(tr); });
+  tb.querySelectorAll('button[data-i]').forEach(b=>b.onclick=()=>{ const i=+b.dataset.i; const l=loadRecords(); l.splice(i,1); saveRecords(l); });
 }
-function toggleExportButtons(){
-  const any = loadRecords().length>0;
-  $('#btnExport').disabled = !any;
-  $('#btnClear').disabled = !any;
-}
+function toggleExportButtons(){ const any=loadRecords().length>0; $('#btnExport').disabled=!any; $('#btnClear').disabled=!any; }
 renderTable(); toggleExportButtons();
 
-/* ==================== Yardımcı Doğrulamalar ==================== */
-function normalizeDigits(s){
-  if(!s) return s;
-  return s.replace(/O/g,'0').replace(/D/g,'0').replace(/I/g,'1').replace(/L/g,'1').replace(/Z/g,'2').replace(/S/g,'5').replace(/B/g,'8').replace(/G/g,'6');
+/* ==================== Doğrulama & normalizasyon ==================== */
+function normalizeDigits(s){ return (s||'').replace(/O/g,'0').replace(/D/g,'0').replace(/[IL]/g,'1').replace(/Z/g,'2').replace(/S/g,'5').replace(/B/g,'8').replace(/G/g,'6'); }
+function isValidTCKN(n){
+  if(!/^\d{11}$/.test(n) || n[0]==='0') return false;
+  const d=n.split('').map(Number), o=d[0]+d[2]+d[4]+d[6]+d[8], e=d[1]+d[3]+d[5]+d[7];
+  const d10=((o*7 - e)%10+10)%10; if(d10!==d[9]) return false;
+  const d11=d.slice(0,10).reduce((a,b)=>a+b,0)%10; return d11===d[10];
 }
-function isValidDateYYYYMMDD(yy,mm,dd){
-  const year = +yy <= 24 ? (2000 + +yy) : (1900 + +yy);
-  const m = +mm, d = +dd;
-  if(m<1||m>12||d<1||d>31) return null;
-  const dateStr = `${year}-${mm}-${dd}`;
-  const dt = new Date(dateStr);
-  if(isNaN(dt.getTime())) return null;
-  if(dt.getFullYear()!==year || (dt.getMonth()+1)!==m || dt.getDate()!==d) return null;
-  return dateStr;
-}
-function isValidTCKN(num){
-  if(!/^\d{11}$/.test(num)) return false;
-  if(num[0]==='0') return false;
-  const d = num.split('').map(n=>+n);
-  const odd = d[0]+d[2]+d[4]+d[6]+d[8];
-  const even = d[1]+d[3]+d[5]+d[7];
-  const d10 = ((odd*7 - even) % 10 + 10) % 10;
-  if(d10 !== d[9]) return false;
-  const d11 = (d.slice(0,10).reduce((a,b)=>a+b,0)) % 10;
-  return d11 === d[10];
-}
+function yyyyFromYY(yy){ const y=+yy; return y<=24?2000+y:1900+y; }
 
-/* ==================== MRZ / Barkod Ayrıştırıcılar ==================== */
-function extractTCKNAnywhere(text){
-  const m = (text||'').replace(/\D/g,'').match(/(\d{11})/);
-  if(!m) return '';
-  const cand = m[1];
-  return isValidTCKN(cand) ? cand : '';
-}
-function scoreMRZ(l1,l2,l3){
-  let s = 0;
-  if(l3 && l3.includes('<<')) s += 8;
-  if(l2 && /^\d{6}/.test(l2)) s += 6;
-  if(l1 && /\d{11}$/.test(l1.replace(/</g,''))) s += 6;
-  if(l1 && l1.length>20) s += 2;
-  if(l2 && l2.length>10) s += 2;
-  if(l3 && l3.length>10) s += 2;
-  return s;
-}
+/* ==================== MRZ Ayrıştırıcı (tam sizin kurala göre) ==================== */
 function parseMRZ_TR(text){
   if(!text) return null;
-  const lines = text.trim().split(/\n+/).map(s=>s.replace(/\s+/g,'').toUpperCase());
-  const MRZ = lines.slice(-3);
-  if(MRZ.length < 2) return null;
-  let l1 = MRZ[0]||'', l2 = MRZ[1]||'', l3 = MRZ[2]||'';
-
-  let tckn = '';
-  if(l1){
-    const r = normalizeDigits(l1.replace(/</g,'').toUpperCase()).replace(/\D/g,'');
-    if(/\d{11}$/.test(r)){
-      const cand = r.slice(-11);
-      if(isValidTCKN(cand)) tckn = cand;
+  const L = text.trim().split(/\n+/).map(s=>s.replace(/\s+/g,'').toUpperCase());
+  const l1=L[0]||'', l2=L[1]||'', l3=L[2]||'';
+  // 1) L1: sağdaki 11 rakam → TCKN
+  let tckn='';{
+    const only=normalizeDigits(l1).replace(/\D/g,'');
+    const m=only.match(/(\d{11})$/); if(m && isValidTCKN(m[1])) tckn=m[1];
+  }
+  // 2) L2: soldaki 6 rakam → YYMMDD
+  let dogum='';{
+    const left6=(normalizeDigits(l2).match(/^\d{6}/)||[])[0];
+    if(left6){ const yy=left6.slice(0,2), mm=left6.slice(2,4), dd=left6.slice(4,6);
+      const Y=yyyyFromYY(yy); const M=+mm, D=+dd;
+      if(M>=1&&M<=12&&D>=1&&D<=31){ dogum=`${Y}-${mm}-${dd}`; }
     }
   }
-
-  let dogum = '';
-  if(l2){
-    const six = (l2.match(/^\d{6}/) || [])[0] || normalizeDigits(l2).match(/^\d{6}/)?.[0];
-    if(six){
-      const yy = six.slice(0,2), mm = six.slice(2,4), dd = six.slice(4,6);
-      const ok = isValidDateYYYYMMDD(yy,mm,dd);
-      if(ok) dogum = ok;
-    }
+  // 3) L3: SOYAD<<AD
+  let ad='',soyad='';{
+    const p=l3.split('<<'); if(p.length>=2){ soyad=p[0].replace(/</g,' ').trim().replace(/\s+/g,' '); ad=p.slice(1).join(' ').replace(/</g,' ').trim().replace(/\s+/g,' '); }
   }
-
-  let ad='', soyad='';
-  if(l3 && l3.includes('<<')){
-    const [s,g] = l3.split('<<');
-    soyad = s.replace(/</g,' ').trim().replace(/\s+/g,' ');
-    ad = (g||'').replace(/</g,' ').trim().replace(/\s+/g,' ');
-  }
-
-  const basicOk = (ad||soyad||dogum||tckn);
-  if(!basicOk) return null;
-  return { ad, soyad, dogum, tckn, l1, l2, l3, _score: scoreMRZ(l1,l2,l3) };
-}
-function fillForm(obj){
-  if(!obj) return;
-  $('#tckn').value = obj.tckn||'';
-  $('#ad').value = obj.ad||'';
-  $('#soyad').value = obj.soyad||'';
-  $('#dogum').value = obj.dogum||'';
-  if(obj.raw) $('#raw').value = obj.raw;
+  if(!(tckn||dogum||ad||soyad)) return null;
+  return {tckn, dogum, ad, soyad};
 }
 
-/* ==================== Kamera listesi / seçim ==================== */
+/* ==================== Kamera ==================== */
 function preferBack(list){
-  const score = d=>{
-    const L=(d.label||'').toLowerCase(); let s=0;
-    if(/back|rear|environment/.test(L)) s+=5;
-    if(/front|user/.test(L)) s-=4;
-    if(/tele|macro|3x|5x/.test(L)) s+=1;
-    if(/camera\s*0.*back/.test(L)) s+=2;
-    return s;
-  };
+  const score=d=>{ const L=(d.label||'').toLowerCase(); let s=0; if(/back|rear|environment/.test(L)) s+=5; if(/front|user/.test(L)) s-=4; if(/camera\s*0.*back/.test(L)) s+=2; return s; };
   return list.slice().sort((a,b)=>score(b)-score(a));
 }
-async function listCameras(){
-  try{ const tmp = await navigator.mediaDevices.getUserMedia({video:true,audio:false}); tmp.getTracks().forEach(t=>t.stop()); }catch(_){}
-  let all = await navigator.mediaDevices.enumerateDevices();
-  all = all.filter(d=>d.kind==='videoinput');
-  devices = preferBack(all);
-  const sel = $('#camera'); sel.innerHTML='';
-  devices.forEach((d,i)=>{ const o=document.createElement('option'); o.value=i; o.textContent=d.label||`Kamera ${i+1}`; sel.appendChild(o); });
-  deviceIndex=0; sel.value='0';
-  log('Kameralar:', devices);
-}
-
-/* ==================== Video oynatma güvencesi ==================== */
-function waitForFirstFrame(video){
-  return new Promise(resolve=>{
-    if(video.readyState>=2 && video.videoWidth>0){ return resolve(); }
-    let done=false;
-    const settle=()=>{ if(!done && video.videoWidth>0){ done=true; resolve(); } };
-    video.addEventListener('canplay', ()=>settle(), {once:true});
-    if('requestVideoFrameCallback' in video){
-      video.requestVideoFrameCallback(()=>settle());
-    }else{
-      const iv=setInterval(()=>{ if(done) return clearInterval(iv); if(video.videoWidth>0){ clearInterval(iv); settle(); } }, 50);
-    }
-    setTimeout(()=>settle(), 3000);
-  });
-}
-async function tryPlay(video){
-  try{
-    video.muted=true; video.setAttribute('muted',''); video.setAttribute('playsinline','');
-    await video.play(); $('#tapOverlay').style.display='none'; return true;
-  }catch(e){
-    log('video.play reddedildi:', e.name, e.message);
-    $('#tapOverlay').style.display='flex';
-    return new Promise(res=>{
-      $('#btnTap').onclick = async ()=>{
-        try{ await video.play(); $('#tapOverlay').style.display='none'; res(true); }
-        catch(e2){ log('tap play hata:', e2.name, e2.message); res(false); }
-      };
-    });
-  }
-}
-
-/* ==================== Akış kontrolü ==================== */
-async function stopAll(){
-  showScanline(false);
-  if(scanTimer){ clearInterval(scanTimer); scanTimer=null; }
-  if(codeReader){ try{ await codeReader.reset(); }catch(_){ } codeReader=null; }
-  if(currentStream){ currentStream.getTracks().forEach(t=>t.stop()); }
-  currentStream=null; currentMode=null;
-  $('#btnBarcode').disabled=true; $('#btnMRZ').disabled=true; $('#btnStop').disabled=true;
-}
+async function listCameras(){ try{ const tmp=await navigator.mediaDevices.getUserMedia({video:true,audio:false}); tmp.getTracks().forEach(t=>t.stop()); }catch(_){ } let all=await navigator.mediaDevices.enumerateDevices(); all=all.filter(d=>d.kind==='videoinput'); devices=preferBack(all); const sel=$('#camera'); sel.innerHTML=''; devices.forEach((d,i)=>{ const o=document.createElement('option'); o.value=i; o.textContent=d.label||`Kamera ${i+1}`; sel.appendChild(o); }); deviceIndex=0; sel.value='0'; }
+function waitForFirstFrame(v){ return new Promise(r=>{ if(v.readyState>=2&&v.videoWidth>0) return r(); let done=false; const ok=()=>{ if(!done && v.videoWidth>0){ done=true; r(); } }; v.addEventListener('canplay',()=>ok(),{once:true}); if('requestVideoFrameCallback' in v){ v.requestVideoFrameCallback(()=>ok()); } else { const iv=setInterval(()=>{ if(done) return clearInterval(iv); if(v.videoWidth>0){ clearInterval(iv); ok(); } },50);} setTimeout(()=>ok(),3000); }); }
+async function tryPlay(v){ try{ v.muted=true; v.setAttribute('muted',''); v.setAttribute('playsinline',''); await v.play(); $('#tapOverlay').style.display='none'; return true; }catch(e){ $('#tapOverlay').style.display='flex'; return new Promise(res=>{ $('#btnTap').onclick=async()=>{ try{ await v.play(); $('#tapOverlay').style.display='none'; res(true); }catch{ res(false); } }; }); } }
+async function stopAll(){ showScanline(false); if(scanTimer){ clearInterval(scanTimer); scanTimer=null; } if(codeReader){ try{ await codeReader.reset(); }catch{} codeReader=null; } if(currentStream){ currentStream.getTracks().forEach(t=>t.stop()); } currentStream=null; currentMode=null; $('#btnBarcode').disabled=true; $('#btnMRZ').disabled=true; $('#btnStop').disabled=true; }
 async function openCamera(){
   await stopAll();
-  const dev = devices[deviceIndex];
-  if(!dev){ setStatus('Kamera bulunamadı.'); return false; }
-  const low = $('#lowres').checked;
-  const constraints = {
-    video: {
-      deviceId: { exact: dev.deviceId },
-      facingMode: 'environment',
-      width: low ? {ideal:1280} : {ideal:1920},
-      height: low ? {ideal:720} : {ideal:1080},
-      frameRate: { ideal: 30 },
-      advanced: [{ focusMode:'continuous' }]
-    },
-    audio:false
-  };
+  const dev=devices[deviceIndex]; if(!dev){ setStatus('Kamera bulunamadı.'); return false; }
+  const low=$('#lowres').checked;
+  const constraints={ video:{ deviceId:{exact:dev.deviceId}, facingMode:'environment', width: low?{ideal:1280}:{ideal:1920}, height: low?{ideal:720}:{ideal:1080}, frameRate:{ideal:30}, advanced:[{focusMode:'continuous'}]}, audio:false };
   setStatus('Kamera açılıyor…');
-  const v = $('#video');
+  const v=$('#video');
   try{
-    const stream = await navigator.mediaDevices.getUserMedia(constraints);
-    currentStream = stream; v.srcObject = stream;
-    const played = await tryPlay(v);
-    if(!played){ setStatus('Videoyu başlatmak için butona dokunun.'); return false; }
+    const stream=await navigator.mediaDevices.getUserMedia(constraints);
+    currentStream=stream; v.srcObject=stream;
+    const played=await tryPlay(v); if(!played){ setStatus('Videoyu başlatmak için dokunun.'); return false; }
     await waitForFirstFrame(v);
     setStatus('Kamera açık.');
     $('#btnBarcode').disabled=false; $('#btnMRZ').disabled=false; $('#btnStop').disabled=false;
     return true;
-  }catch(e){
-    log('getUserMedia hata:', e.name, e.message);
-    if(e.name==='NotAllowedError') setStatus('Kamera izni verilmedi.');
-    else if(e.name==='NotReadableError') setStatus('Kamera başka uygulama tarafından kullanılıyor olabilir.');
-    else setStatus('Kamera açılamadı: '+e.message);
-    return false;
-  }
+  }catch(e){ log('getUserMedia:', e.name, e.message); setStatus('Kamera açılamadı: '+e.message); return false; }
 }
 
-/* ==================== Ortak Sonuç İşleme ==================== */
+/* ==================== Ortak Sonuç ==================== */
+function fillForm(o){ if(!o) return; $('#tckn').value=o.tckn||''; $('#ad').value=o.ad||''; $('#soyad').value=o.soyad||''; $('#dogum').value=o.dogum||''; if(o.raw) $('#raw').value=o.raw; }
 function onScan(text, src, parsed){
-  $('#raw').value = text||'';
-  let obj = parsed || {};
-  if(src==='barcode'){
-    const t = extractTCKNAnywhere(text);
-    if(t && !obj.tckn) obj.tckn = t;
-    const maybeMRZ = parseMRZ_TR(text); // barkodda MRZ varsa
-    if(maybeMRZ){ obj = {...maybeMRZ, raw:text}; }
-  }
-  obj.raw = text;
-  fillForm(obj);
-  setStatus(src==='mrz' ? 'MRZ okundu.' : 'Barkod okundu.');
+  $('#raw').value=text||'';
+  let obj=parsed||{};
+  if(src==='barcode'){ const t=(text||'').replace(/\D/g,'').match(/\d{11}/)?.[0]; if(t && !obj.tckn) obj.tckn=t; const maybe=parseMRZ_TR(text); if(maybe){ obj={...maybe, raw:text}; } }
+  obj.raw=text; fillForm(obj); setStatus(src==='mrz'?'MRZ okundu.':'Barkod okundu.');
 }
 
-/* ==================== Barkod (ZXing — SADECE vendor) ==================== */
+/* ==================== Barkod (ZXing) ==================== */
 async function startBarcode(){
-  if(!currentStream){ const ok = await openCamera(); if(!ok) return; }
-  const okLib = await loadZXingVendorOnly();
-  if(!okLib){
-    setStatus('ZXing vendor bulunamadı. /vendor içine ekleyin.');
-    return;
-  }
+  if(!currentStream){ const ok=await openCamera(); if(!ok) return; }
+  const okLib=await loadZXingVendorOnly(); if(!okLib){ setStatus('ZXing vendor bulunamadı.'); return; }
   currentMode='barcode'; showScanline(true); setStatus('Barkod taranıyor…');
-
-  const hints = new Map();
-  const BF = ZXingBrowser.BarcodeFormat;
+  const hints=new Map(); const BF=ZXingBrowser.BarcodeFormat;
   hints.set(ZXingBrowser.DecodeHintType.POSSIBLE_FORMATS,[BF.PDF_417,BF.QR_CODE,BF.CODE_128]);
-  codeReader = new ZXingBrowser.BrowserMultiFormatReader(hints);
-
-  setTimeout(()=> {
-    try{
-      codeReader.decodeFromVideoElementContinuously($('#video'), (res, err)=>{
-        if(res){
-          showScanline(false);
-          const txt = res.getText ? res.getText() : (res.text || '');
-          onScan(txt, 'barcode');
-        }
-      });
-    }catch(e){ log('ZXing start hata:', e); setStatus('Barkod okuyucu hatası: '+e.message); }
-  }, 300);
+  codeReader=new ZXingBrowser.BrowserMultiFormatReader(hints);
+  setTimeout(()=>{ try{ codeReader.decodeFromVideoElementContinuously($('#video'), (res)=>{ if(res){ showScanline(false); const txt=res.getText?res.getText():res.text||''; onScan(txt,'barcode'); } }); }catch(e){ log('ZXing:',e); setStatus('Barkod hatası: '+e.message);} },300);
 }
 
-/* ==================== Görüntü işleme ==================== */
-function binarize(ctx, w, h, thr=140){
-  const img=ctx.getImageData(0,0,w,h), d=img.data;
-  for(let i=0;i<d.length;i+=4){
-    const g=(d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114)|0;
-    const bw=g>thr?255:0; d[i]=d[i+1]=d[i+2]=bw;
-  }
-  ctx.putImageData(img,0,0);
-}
-function sharpen(ctx, w, h){
-  const img=ctx.getImageData(0,0,w,h), d=img.data.slice();
-  const out=ctx.getImageData(0,0,w,h), o=out.data;
-  const off=[-w*4,0,w*4,-4,4];
-  for(let i=0;i<o.length;i+=4){
-    let sum = 0, cnt=0;
-    for(const k of off){
-      const j=i+k;
-      if(j>=0 && j<d.length){
-        const g=(d[j]*0.299 + d[j+1]*0.587 + d[j+2]*0.114)|0;
-        sum+=g; cnt++;
-      }
-    }
-    const center=(d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114)|0;
-    let val = Math.min(255, Math.max(0, center*1.5 - (sum/cnt)*0.5));
-    o[i]=o[i+1]=o[i+2]=val; o[i+3]=255;
-  }
-  ctx.putImageData(out,0,0);
-}
+/* ==================== Görüntü işleme (OCR için) ==================== */
+function binarize(ctx,w,h,thr=140){ const img=ctx.getImageData(0,0,w,h), d=img.data; for(let i=0;i<d.length;i+=4){ const g=(d[i]*0.299+d[i+1]*0.587+d[i+2]*0.114)|0; const bw=g>thr?255:0; d[i]=d[i+1]=d[i+2]=bw; } ctx.putImageData(img,0,0); }
+function sharpen(ctx,w,h){ const img=ctx.getImageData(0,0,w,h), d=img.data.slice(); const out=ctx.getImageData(0,0,w,h), o=out.data; const off=[-w*4,0,w*4,-4,4]; for(let i=0;i<o.length;i+=4){ let sum=0,cnt=0; for(const k of off){ const j=i+k; if(j>=0 && j<d.length){ const g=(d[j]*0.299+d[j+1]*0.587+d[j+2]*0.114)|0; sum+=g; cnt++; } } const center=(d[i]*0.299+d[i+1]*0.587+d[i+2]*0.114)|0; let val=Math.min(255,Math.max(0,center*1.5-(sum/cnt)*0.5)); o[i]=o[i+1]=o[i+2]=val; o[i+3]=255; } ctx.putImageData(out,0,0); }
 
-/* ==================== MRZ (Stabil: çoklu eşik + vote + skor) ==================== */
+/* ==================== MRZ (stabil tarama) ==================== */
 async function ensureMRZWorker(){
   if(mrzWorker) return true;
-  const okLib = await loadTesseract();
-  if(!okLib){ setStatus('Tesseract yüklenemedi. /vendor/tesseract içine kopyalayın.'); return false; }
+  const ok=await loadTesseract(); if(!ok){ setStatus('Tesseract yüklenemedi.'); return false; }
   try{
     if(Tesseract.createWorker){
-      // Aynı origin’den servis edeceksen bu yolları aktif et:
-      // const base = '/vendor/tesseract/';
-      // mrzWorker = await Tesseract.createWorker({
-      //   workerPath: base + 'worker.min.js',
-      //   corePath: base + 'tesseract-core.wasm', // veya 'tesseract-core-simd.wasm'
-      //   langPath: base,
-      //   logger: null
-      // });
-      mrzWorker = await Tesseract.createWorker({ logger: null });
-      await mrzWorker.load();
-      await mrzWorker.loadLanguage('eng');
-      await mrzWorker.initialize('eng');
-      await mrzWorker.setParameters({
-        tessedit_pageseg_mode: '7',
-        tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<'
-      });
-      log('MRZ worker hazır.');
+      mrzWorker=await Tesseract.createWorker({logger:null});
+      await mrzWorker.load(); await mrzWorker.loadLanguage('eng'); await mrzWorker.initialize('eng');
+      await mrzWorker.setParameters({ tessedit_pageseg_mode:'7', tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<' });
       return true;
-    }else{
-      mrzWorker = 'legacy';
-      log('Tesseract legacy modda çalışacak.');
-      return true;
-    }
-  }catch(e){
-    log('MRZ worker hata:', e);
-    setStatus('MRZ worker başlatılamadı (muhtemel CORS/worker yolu). /vendor/tesseract yollarını kullanın.');
-    return false;
-  }
+    }else{ mrzWorker='legacy'; return true; }
+  }catch(e){ log('worker:', e); setStatus('MRZ worker hatası.'); return false; }
 }
-
-/* Bir satırı OCR et (confidence ile) */
 async function ocrWithWorker(canvas, params){
-  if(mrzWorker==='legacy'){
-    const r = await Tesseract.recognize(canvas,'eng',params||{});
-    const text = (r.data && r.data.text) ? r.data.text : '';
-    const conf = (r.data && typeof r.data.confidence==='number') ? r.data.confidence : 0;
-    return { text, conf };
-  }
+  if(mrzWorker==='legacy'){ const r=await Tesseract.recognize(canvas,'eng',params||{}); return {text:r?.data?.text||'', conf:r?.data?.confidence||0}; }
   if(params) await mrzWorker.setParameters(params);
-  const r = await mrzWorker.recognize(canvas);
-  const text = (r.data && r.data.text) ? r.data.text : '';
-  const conf = (r.data && typeof r.data.confidence==='number') ? r.data.confidence : 0;
-  return { text, conf };
+  const r=await mrzWorker.recognize(canvas); return {text:r?.data?.text||'', conf:r?.data?.confidence||0};
 }
-
 async function startMRZ(){
-  if(!currentStream){ const ok = await openCamera(); if(!ok) return; }
-  const okW = await ensureMRZWorker();
-  if(!okW) return;
-
+  if(!currentStream){ const ok=await openCamera(); if(!ok) return; }
+  const okW=await ensureMRZWorker(); if(!okW) return;
   currentMode='mrz'; showScanline(true); setStatus('MRZ taranıyor…');
-
   const v=$('#video');
-  const bandCanvas=document.createElement('canvas'), bctx=bandCanvas.getContext('2d');
+  const band=document.createElement('canvas'), bctx=band.getContext('2d');
+  stab.l1=[]; stab.l2=[]; stab.l3=[]; mrzBusy=false;
 
-  mrzBusy=false; stabWin.l1=[]; stabWin.l2=[]; stabWin.l3=[];
+  const thresholds=[110,125,140,160];
+  function variants(srcCtx,sx,sy,sw,sh,scale){ const arr=[]; for(const thr of thresholds){ const c=document.createElement('canvas'); const x=c.getContext('2d'); c.width=Math.max(700,Math.floor(sw*scale)); c.height=Math.floor(sh*scale); x.drawImage(srcCtx.canvas,sx,sy,sw,sh,0,0,c.width,c.height); sharpen(x,c.width,c.height); binarize(x,c.width,c.height,thr); arr.push(c); } return arr; }
+  async function bestText(cans, params, clean){ let best='',q=-1; for(const c of cans){ const {text,conf}=await ocrWithWorker(c,params); const t=(clean(text)||'').toUpperCase().replace(/[^\dA-Z<\n]/g,'').trim(); if(!t) continue; const score=(conf||0)+t.length*1.5; if(score>q){ q=score; best=t; } } return best; }
 
-  function chooseVariants(srcCtx, sx, sy, sw, sh, scale, thresholds){
-    const cand = [];
-    for(const thr of thresholds){
-      const tmp = document.createElement('canvas');
-      const tctx = tmp.getContext('2d');
-      tctx.canvas.width = Math.max(700, Math.floor(sw*scale));
-      tctx.canvas.height = Math.floor(sh*scale);
-      tctx.drawImage(srcCtx.canvas, sx, sy, sw, sh, 0, 0, tctx.canvas.width, tctx.canvas.height);
-      sharpen(tctx, tctx.canvas.width, tctx.canvas.height);
-      binarize(tctx, tctx.canvas.width, tctx.canvas.height, thr);
-      cand.push(tmp);
-    }
-    return cand;
-  }
-  const thresholds = [110,125,140,160];
-
-  const tick = async ()=>{
-    if(currentMode!=='mrz' || mrzBusy || !v.videoWidth){ return; }
+  const tick=async()=>{
+    if(currentMode!=='mrz'||mrzBusy||!v.videoWidth) return;
     mrzBusy=true;
     try{
-      const vw=v.videoWidth, vh=v.videoHeight;
-      const bandH = Math.floor(vh*0.34), bandY = vh - bandH;
-      const scaleBand = 2;
-
-      bandCanvas.width = Math.floor(vw*scaleBand);
-      bandCanvas.height = Math.floor(bandH*scaleBand);
-      bctx.drawImage(v, 0, bandY, vw, bandH, 0,0, bandCanvas.width, bandCanvas.height);
-      binarize(bctx, bandCanvas.width, bandCanvas.height, 135);
-
-      const lineH = Math.floor(bandCanvas.height/3);
-      const vL1 = chooseVariants(bctx, 0, 0*lineH, bandCanvas.width, lineH, 1.8, thresholds);
-      const vL2 = chooseVariants(bctx, 0, 1*lineH, bandCanvas.width, lineH, 1.8, thresholds);
-      const vL3 = chooseVariants(bctx, 0, 2*lineH, bandCanvas.width, lineH, 2.0, thresholds);
-
-      const pNum = {tessedit_pageseg_mode:'7',tessedit_char_whitelist:'0123456789<', classify_bln_numeric_mode:'1'};
-      const pAlpha = {tessedit_pageseg_mode:'7',tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ<'};
-      const pMix = {tessedit_pageseg_mode:'7',tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<'};
-
-      async function bestOf(variants, params, cleanFn){
-        let bestTxt='', bestQ=-1;
-        for(const c of variants){
-          const {text, conf} = await ocrWithWorker(c, params);
-          const cleaned = (cleanFn(text)||'').toUpperCase().replace(/[^\dA-Z<\n]/g,'').trim();
-          if(!cleaned) continue;
-          const q = (conf||0) + cleaned.length*1.5;
-          if(q>bestQ){ bestQ=q; bestTxt=cleaned; }
-        }
-        return bestTxt;
-      }
-      const l2 = await bestOf(vL2, pNum, t=>t.replace(/[^\d<\n]/g,''));
-      const l3 = await bestOf(vL3, pAlpha, t=>t.replace(/[^A-Z<\n]/g,''));
-      const l1 = await bestOf(vL1, pMix, t=>t.replace(/[^\dA-Z<\n]/g,''));
-
-      pushStab('l1', l1); pushStab('l2', l2); pushStab('l3', l3);
-      const s1 = majority(stabWin.l1);
-      const s2 = majority(stabWin.l2);
-      const s3 = majority(stabWin.l3);
-      const cleaned = [s1,s2,s3].filter(Boolean).join('\n');
-
+      const vw=v.videoWidth, vh=v.videoHeight, bandH=Math.floor(vh*0.34), bandY=vh-bandH, scale=2;
+      band.width=Math.floor(vw*scale); band.height=Math.floor(bandH*scale);
+      bctx.drawImage(v,0,bandY,vw,bandH,0,0,band.width,band.height);
+      binarize(bctx,band.width,band.height,135);
+      const h=Math.floor(band.height/3);
+      const v1=variants(bctx,0,0*h,band.width,h,1.8);
+      const v2=variants(bctx,0,1*h,band.width,h,1.8);
+      const v3=variants(bctx,0,2*h,band.width,h,2.0);
+      const pNum={tessedit_pageseg_mode:'7',tessedit_char_whitelist:'0123456789<', classify_bln_numeric_mode:'1'};
+      const pAlpha={tessedit_pageseg_mode:'7',tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ<'};
+      const pMix={tessedit_pageseg_mode:'7',tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<'};
+      const l2=await bestText(v2,pNum,t=>t.replace(/[^\d<\n]/g,''));
+      const l3=await bestText(v3,pAlpha,t=>t.replace(/[^A-Z<\n]/g,''));
+      const l1=await bestText(v1,pMix,t=>t.replace(/[^\dA-Z<\n]/g,''));
+      pushStab('l1',l1); pushStab('l2',l2); pushStab('l3',l3);
+      const s1=majority(stab.l1), s2=majority(stab.l2), s3=majority(stab.l3);
+      const cleaned=[s1,s2,s3].filter(Boolean).join('\n');
       if(cleaned.replace(/\s/g,'').length>20){
-        const mrz = parseMRZ_TR(cleaned);
-        if(mrz){
-          const okScore = mrz._score >= 12 && (mrz.tckn || mrz.dogum);
-          if(okScore){
-            showScanline(false);
-            mrz.raw = cleaned;
-            onScan(cleaned, 'mrz', mrz);
-            setStatus('MRZ okundu.');
-          }else{
-            setStatus('MRZ kısmen tanındı, netleştiriliyor…');
-            $('#raw').value = cleaned;
-          }
-        }else{
-          setStatus('MRZ yakalandı; ayrıştırılamadı (açı/ışık).');
-          $('#raw').value = cleaned;
-        }
-      }else{
-        setStatus('MRZ bekleniyor… Kartı düz ve yakın tutun.');
-      }
-    }catch(e){
-      log('MRZ tick hata:', e);
-    }finally{
-      mrzBusy=false;
-    }
+        const parsed=parseMRZ_TR(cleaned);
+        if(parsed){ parsed.raw=cleaned; onScan(cleaned,'mrz',parsed); showScanline(false); }
+        else{ setStatus('MRZ yakalandı; ayrıştırılamadı.'); $('#raw').value=cleaned; }
+      }else{ setStatus('MRZ bekleniyor… Kartı düz ve yakın tutun.'); }
+    }catch(e){ log('MRZ tick:',e); } finally{ mrzBusy=false; }
   };
-
-  scanTimer = setInterval(tick, 600);
+  scanTimer=setInterval(tick,600);
 }
 
-/* ==================== UI Olayları ==================== */
-$('#btnOpen').addEventListener('click', async ()=>{
-  try{ await listCameras(); const ok = await openCamera(); if(!ok) return; }catch(e){ log('btnOpen hata:', e); }
-});
+/* ==================== UI ==================== */
+$('#btnOpen').addEventListener('click', async ()=>{ try{ await listCameras(); await openCamera(); }catch(e){ log('btnOpen:',e); } });
 $('#btnStop').addEventListener('click', async ()=>{ await stopAll(); setStatus('Durduruldu.'); });
-$('#btnBarcode').addEventListener('click', async ()=>{ try{ await startBarcode(); }catch(e){ log('startBarcode hata:', e); } });
-$('#btnMRZ').addEventListener('click', async ()=>{ try{ await startMRZ(); }catch(e){ log('startMRZ hata:', e); } });
+$('#btnBarcode').addEventListener('click', async ()=>{ try{ await startBarcode(); }catch(e){ log('barcode:',e); } });
+$('#btnMRZ').addEventListener('click', async ()=>{ try{ await startMRZ(); }catch(e){ log('mrz:',e); } });
 $('#camera').addEventListener('change', async ()=>{ deviceIndex=+$('#camera').value; if(currentStream){ await openCamera(); } });
 
-/* Kayıt ekleme / silme / dışa aktarım */
-$('#btnSave').addEventListener('click', ()=>{
-  const rec = {
-    tckn: $('#tckn').value.trim(),
-    ad: $('#ad').value.trim(),
-    soyad: $('#soyad').value.trim(),
-    dogum: $('#dogum').value.trim(),
-    raw: $('#raw').value.trim(),
-    ts: new Date().toISOString()
-  };
-  const list = loadRecords(); list.push(rec); saveRecords(list);
-  setStatus('Kayıt eklendi.');
-});
-$('#btnClear').addEventListener('click', ()=>{
-  if(confirm('Tüm kayıtları silmek istiyor musunuz?')) saveRecords([]);
-});
-$('#btnExport').addEventListener('click', ()=>{
-  const list = loadRecords();
-  if(!list.length){ alert('Dışa aktarılacak kayıt yok.'); return; }
-  const header = 'TCKN;AD;SOYAD;DOGUM_TARIHI;RAW\n';
-  const lines = list.map(r => [r.tckn||'',r.ad||'',r.soyad||'',r.dogum||'', (r.raw||'').replace(/\n/g,' ')].join(';'));
-  const blob = new Blob(['\ufeff'+header + lines.join('\n')], {type:'text/plain;charset=utf-8'});
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'kimlik_kayitlari.txt';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setStatus('TXT dışa aktarıldı.');
-});
+$('#btnSave').addEventListener('click', ()=>{ const rec={ tckn:$('#tckn').value.trim(), ad:$('#ad').value.trim(), soyad:$('#soyad').value.trim(), dogum:$('#dogum').value.trim(), raw:$('#raw').value.trim(), ts:new Date().toISOString() }; const l=loadRecords(); l.push(rec); saveRecords(l); setStatus('Kayıt eklendi.'); });
+$('#btnClear').addEventListener('click', ()=>{ if(confirm('Tüm kayıtlar silinsin mi?')) saveRecords([]); });
+$('#btnExport').addEventListener('click', ()=>{ const l=loadRecords(); if(!l.length){ alert('Dışa aktarılacak kayıt yok.'); return; } const header='TCKN;AD;SOYAD;DOGUM_TARIHI;RAW\n'; const lines=l.map(r=>[r.tckn||'',r.ad||'',r.soyad||'',r.dogum||'',(r.raw||'').replace(/\n/g,' ')].join(';')); const blob=new Blob(['\ufeff'+header+lines.join('\n')],{type:'text/plain;charset=utf-8'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='kimlik_kayitlari.txt'; document.body.appendChild(a); a.click(); a.remove(); setStatus('TXT dışa aktarıldı.'); });
 
-/* İlk yükleme: sadece kameraları listele (akış açılmaz) */
-(async()=>{ try{ await listCameras(); }catch(e){ log('listeleme hata:', e); } })();
+(async()=>{ try{ await listCameras(); }catch(e){ log('listeleme:',e); } })();
 toggleExportButtons();
 </script>
 </body>
