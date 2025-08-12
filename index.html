@@ -27,7 +27,7 @@
 
     /* Üst çubuk */
     header {
-      position: sticky; top: 0; z-index: 30;
+      position: sticky; top: 0; z-index: 40;
       padding: 14px 16px;
       border-bottom: 1px solid #1f2733;
       backdrop-filter: blur(6px);
@@ -37,19 +37,11 @@
     header .bar { display: grid; gap: 10px; align-items: center; }
     header h1 { font-size: 16px; margin: 0; color: #cfe1ff; }
 
-    .ctrls {
-      display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
-    }
-
-    select, button, label, input {
-      font-size: 14px;
-    }
+    .ctrls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    select, button, label, input { font-size: 14px; }
     select, button, input[type=file], input[type=text], input[type=date] {
-      border: 1px solid var(--input-br);
-      background: var(--input-bg);
-      color: var(--text);
-      padding: 10px 12px;
-      border-radius: 10px;
+      border: 1px solid var(--input-br); background: var(--input-bg); color: var(--text);
+      padding: 10px 12px; border-radius: 10px;
     }
     input[type=file]::-webkit-file-upload-button {
       border: 0; padding: 10px 12px; margin-right: 8px;
@@ -60,15 +52,13 @@
     .btn-primary { background: var(--accent); border: 0; color: #fff; }
     .btn-ghost { background: transparent; border: 1px dashed var(--input-br); }
 
-    /* Ana düzen — tek sütun, dikey akış */
+    /* Ana düzen — tek sütun */
     main { padding: 16px; }
     .stack { display: grid; gap: 16px; }
 
     .panel {
-      background: var(--panel);
-      border: 1px solid var(--panel-border);
-      border-radius: 14px;
-      overflow: hidden;
+      background: var(--panel); border: 1px solid var(--panel-border);
+      border-radius: 14px; overflow: hidden;
     }
     .panel h2 {
       font-size: 15px; margin: 0; padding: 12px 14px;
@@ -78,19 +68,60 @@
     .panel h2 .sub { font-weight: 400; color: var(--muted); font-size: 12px; }
     .content { padding: 12px; display: grid; gap: 12px; }
 
-    /* Görsel alan */
-    #video { width: 100%; border-radius: 10px; background: #000; }
-    #img { max-width: 100%; display: none; border-radius: 10px; }
+    /* Görüntü alanı ve tarama deneyimi */
     .frame { position: relative; }
+    #video { width: 100%; border-radius: 12px; background: #000; }
+    #img { max-width: 100%; display: none; border-radius: 12px; }
     .mrz-window {
       position: absolute; left: 5%; right: 5%; height: 26%; bottom: 8%;
-      border: 2px dashed var(--accent-2); border-radius: 8px;
+      border: 2px dashed var(--accent-2); border-radius: 10px;
       box-shadow: 0 0 0 200vmax #0000 inset;
+      pointer-events: none;
     }
     #tapOverlay {
-      display: none; position: absolute; inset: 0; align-items: center; justify-content: center; background: #0006; border-radius: 10px;
+      display: none; position: absolute; inset: 0; align-items: center; justify-content: center;
+      background: #0006; border-radius: 12px;
     }
     #tapOverlay button { background: var(--accent); border: 0; padding: 10px 14px; border-radius: 10px; color: #fff; font-weight: 700; }
+
+    /* Büyük tarama butonu (FAB) */
+    .fab {
+      position: absolute; left: 50%; transform: translateX(-50%);
+      bottom: 14px; z-index: 10;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .fab button {
+      padding: 14px 18px; border-radius: 999px; font-size: 15px;
+      box-shadow: 0 6px 20px #0008;
+    }
+    .fab .auto {
+      display: flex; align-items: center; gap: 8px;
+      background: rgba(22,32,50,.7); border: 1px solid var(--panel-border); color: var(--text);
+      padding: 10px 12px; border-radius: 999px; backdrop-filter: blur(6px);
+    }
+    .fab .pulse {
+      position: absolute; inset: 0; border-radius: 999px; pointer-events: none; opacity: .25; display: none;
+    }
+    .fab.auto-active .pulse {
+      display: block; animation: pulse 1.6s infinite;
+      border: 2px solid var(--accent);
+    }
+    @keyframes pulse {
+      0% { transform: scale(1); opacity: .35; }
+      70% { transform: scale(1.12); opacity: .05; }
+      100% { transform: scale(1.2); opacity: 0; }
+    }
+
+    /* Hızlı sonuç kartı (video üstünde) */
+    .quick-result {
+      position: absolute; left: 12px; top: 12px; right: 12px;
+      background: rgba(15,21,32,.85); border: 1px solid var(--panel-border); border-radius: 12px;
+      padding: 10px 12px; backdrop-filter: blur(6px);
+      display: none; z-index: 12;
+    }
+    .quick-result .row { display: flex; gap: 12px; flex-wrap: wrap; font-size: 13px; }
+    .quick-result .row b { color: #cfe1ff; }
+    .quick-result .status { margin-top: 6px; font-size: 12px; color: var(--muted); }
 
     .hint { font-size: 12px; color: var(--muted); line-height: 1.6; }
     pre { white-space: pre-wrap; background: #0c111b; padding: 10px; border-radius: 10px; border: 1px solid var(--panel-border); }
@@ -118,19 +149,15 @@
     th { color: #b9c8da; font-weight: 700; }
     table button { padding: 6px 10px; }
 
-    footer {
-      padding: 14px 16px; font-size: 12px; color: #8fa8c7; border-top: 1px solid #1f2733;
-    }
+    footer { padding: 14px 16px; font-size: 12px; color: #8fa8c7; border-top: 1px solid #1f2733; }
 
-    /* Küçük ekran iyileştirmeleri */
+    /* Küçük ekranlar */
     @media (max-width: 640px) {
-      header .bar { gap: 8px; }
       .kv { grid-template-columns: 120px 1fr; }
       .form { grid-template-columns: 1fr; }
       .ctrls > * { flex: 1 1 auto; }
       .ctrls span { flex: 0 0 auto; }
-      .toolbar > *:not(.muted) { flex: 0 0 auto; }
-      .btn-primary, .btn-ghost { width: 100%; }
+      .btn-primary, .btn-ghost { width: auto; }
     }
   </style>
   <!-- Tesseract.js (OCR) -->
@@ -159,21 +186,40 @@
     <div class="container stack">
 
       <!-- Görüntü -->
-      <section class="panel">
-        <h2>Görüntü <span class="sub">MRZ penceresine hizalayıp “Tara”ya tıklayın</span></h2>
+      <section class="panel" id="secGoruntu">
+        <h2>Görüntü <span class="sub">MRZ penceresine hizala • Elle Tara, Otomatik Tara ya da ekrana dokun</span></h2>
         <div class="content">
-          <div class="frame">
+          <div class="frame" id="frame">
             <video id="video" autoplay playsinline></video>
             <img id="img" alt="Yüklenen görsel" />
             <div id="tapOverlay"><button id="btnTap">Videoyu Başlat</button></div>
             <div class="mrz-window" title="MRZ penceresi"></div>
+
+            <!-- Büyük aksiyon alanı -->
+            <div class="fab" id="fab">
+              <button id="bigScan" class="btn-primary" title="Tara (Boşluk tuşu veya video alanına dokun)">
+                Tara
+              </button>
+              <label class="auto">
+                <input type="checkbox" id="autoScan" />
+                Otomatik Tara
+                <span class="pulse"></span>
+              </label>
+            </div>
+
+            <!-- Hızlı sonuç -->
+            <div class="quick-result" id="quickResult">
+              <div class="row" id="quickRow"></div>
+              <div class="status" id="quickStatus"></div>
+            </div>
           </div>
+
           <div class="hint">
-            • Sadece <b>arka yüzdeki, &lt; karakterleri içeren MRZ alanını</b> okuyoruz.<br/>
-            • 1. satır <b>sağ uç</b>: <b>11 haneli TCKN</b>.<br/>
-            • 2. satır <b>sol baş 6 hane</b>: <b>YY A A GG</b> (yıl-ay-gün). 00–29 → 20YY, 30–99 → 19YY olarak genişletilir.<br/>
-            • 3. satır: <b>SOYAD&lt;&lt;AD</b> şemasına göre ayrıştırılır.
+            • Ekranın herhangi bir yerine <b>dokunarak</b> da taratabilirsiniz. <b>Boşluk</b> tuşu kısayoldur.<br/>
+            • <b>Otomatik Tara</b> açıkken MRZ alanı stabil hale geldiğinde kendiliğinden tarar (kaydırma gerektirmez).<br/>
+            • 1. satır sağ uç: <b>11 haneli TCKN</b> • 2. satır başı: <b>YYAAGG</b> • 3. satır: <b>SOYAD&lt;&lt;AD</b>.
           </div>
+
           <canvas id="canvas" style="display:none;"></canvas>
         </div>
       </section>
@@ -271,6 +317,7 @@
   const statusEl = $('#status');
   const rawText = $('#rawText');
   const fieldsEl = $('#fields');
+  const frameEl = $('#frame');
 
   const btnOpen = $('#btnOpen');
   const btnStop = $('#btnStop');
@@ -278,6 +325,13 @@
   const selCamera = $('#camera');
   const fileInp = $('#file');
   const btnOCR = $('#btnOCR');
+
+  // Yeni UX elemanları
+  const bigScan = $('#bigScan');
+  const autoScanChk = $('#autoScan');
+  const quickResult = $('#quickResult');
+  const quickRow = $('#quickRow');
+  const quickStatus = $('#quickStatus');
 
   // Düzenleme & kayıt elemanları
   const inpTCKN = $('#inpTCKN');
@@ -302,10 +356,17 @@
 
   const STORAGE_KEY = 'mrzKayitlar';
 
+  // Otomatik tara için hareket algılama
+  const motionCanvas = document.createElement('canvas');
+  const MOTION_W = 220;          // küçük çözünürlükte analiz
+  let lastFrame = null;
+  let lastAutoAt = 0;
+  let autoBusy = false;
+
   function setStatus(t){ statusEl.textContent = t; }
   function log(){ /* console.log.apply(console, arguments); */ }
 
-  // ---- Cihaz seçimi: normal arka kamera öncelikli (balık gözünü ele)
+  // ---- Cihaz seçimi: normal arka kamera öncelikli
   function scoreDevice(d){
     const L = (d.label||'').toLowerCase();
     let s = 0;
@@ -403,10 +464,8 @@
     return up.replace(/ /g,'').replace(/\u00A0/g,'');
   }
   function pickMrzLines(text){
-    // Sadece "<" içeren ve makul uzunlukta satırlar
     const lines = text.split(/\n+/).map(s => s.trim()).filter(Boolean);
     const onlyMrz = lines.filter(s => s.includes('<') && s.length >= 20);
-    // En alttaki 3 satır genellikle doğru bloktur
     return onlyMrz.slice(-3);
   }
 
@@ -448,7 +507,7 @@
     return res;
   }
 
-  // TCKN doğrulama (11 hane, ilk hane ≠ 0, 10. ve 11. kontrol)
+  // TCKN doğrulama
   function validateTCKN(id){
     if(!/^[1-9]\d{10}$/.test(id)) return false;
     const digits = id.split('').map(d=>+d);
@@ -467,6 +526,7 @@
     if(!obj || !obj.rawLines || obj.rawLines.length === 0){
       fieldsEl.innerHTML = '<div class="hint">MRZ satırları bulunamadı. Daha net hizalayarak tekrar deneyin.</div>';
       fillEditForm(); // boşalt
+      showQuick(null, 'MRZ satırı bulunamadı.');
       return;
     }
     row('1. Satır', obj.rawLines[0]||'');
@@ -478,13 +538,11 @@
     }else{
       row('T.C. Kimlik No', '<span class="bad">bulunamadı</span>');
     }
-
     if(obj.birthISO){
       row('Doğum Tarihi', obj.birthISO);
     }else{
       row('Doğum Tarihi', '<span class="bad">bulunamadı</span>');
     }
-
     row('Soyad', obj.soyad || '<span class="bad">—</span>');
     row('Ad',    obj.ad    || '<span class="bad">—</span>');
 
@@ -497,6 +555,39 @@
       soyad: obj.soyad || '',
       dob: obj.birthISO || ''
     });
+
+    // Hızlı kart
+    const okT = obj.tcKimlik ? (obj.tcValid ? 'TCKN geçerli' : 'TCKN hatalı') : 'TCKN yok';
+    showQuick({
+      tckn: obj.tcKimlik || '—',
+      ad: obj.ad || '—',
+      soyad: obj.soyad || '—',
+      dob: obj.birthISO || '—'
+    }, okT);
+  }
+
+  function showQuick(data, statusText){
+    const qr = quickResult;
+    const row = quickRow;
+    const st = quickStatus;
+    if(!data){
+      qr.style.display = 'block';
+      row.innerHTML = `<span>Sonuç: <b>—</b></span>`;
+      st.textContent = statusText || '';
+      setTimeout(()=>{ qr.style.display = 'none'; }, 1800);
+      return;
+    }
+    row.innerHTML = `
+      <span><b>TCKN:</b> ${data.tckn}</span>
+      <span><b>Ad:</b> ${data.ad}</span>
+      <span><b>Soyad:</b> ${data.soyad}</span>
+      <span><b>Doğum:</b> ${data.dob}</span>
+    `;
+    st.textContent = statusText || '';
+    qr.style.display = 'block';
+    // 4 sn sonra otomatik gizle
+    clearTimeout(showQuick._t);
+    showQuick._t = setTimeout(()=>{ qr.style.display = 'none'; }, 4000);
   }
 
   function fillEditForm(data){
@@ -523,7 +614,6 @@
     if(!m) return false;
     const d = new Date(s);
     if(Number.isNaN(d.getTime())) return false;
-    // ay/gün eşleşmesi (Date leniency'i kapatmak için)
     const [yy,mm,dd] = [d.getUTCFullYear(), d.getUTCMonth()+1, d.getUTCDate()];
     return (String(yy).padStart(4,'0') === m[1] && String(mm).padStart(2,'0') === m[2] && String(dd).padStart(2,'0') === m[3]);
   }
@@ -621,7 +711,6 @@
         saveStore(data);
       }
     }else if(act === 'edit'){
-      // seçilen kaydı forma yükle
       const r = data[i];
       fillEditForm({ tckn:r.tckn, ad:r.ad, soyad:r.soyad, dob:r.dob });
       window.scrollTo({ top: document.body.scrollHeight*0.33, behavior:'smooth' });
@@ -678,7 +767,6 @@
   }
 
   function takeMrzCropFromImage(){
-    // Yüklenen görselin tamamında OCR yapalım; MRZ satırlarını filtreleyeceğiz
     const w = imgEl.naturalWidth;
     const h = imgEl.naturalHeight;
     if(!w || !h) throw new Error('Görsel yüklenemedi.');
@@ -688,7 +776,6 @@
     const ctx = canvas.getContext('2d');
     ctx.drawImage(imgEl, 0, 0, canvas.width, canvas.height);
     return canvas;
-    // Not: İstersen MRZ bölgesini heuristikle alabilirim; şimdilik tamamı üzerinde OCR yapıp '<' içeren satırları seçiyoruz.
   }
 
   async function ocrCanvasAndParse(cnv){
@@ -713,7 +800,6 @@
       renderFieldsCustom({ rawLines: [] });
       return;
     }
-    // 3 satıra zorlama (yoksa elde olanla)
     const block = lines.slice(-3);
     const parsed = parseCustomFields(block);
     renderFieldsCustom(parsed);
@@ -722,24 +808,81 @@
 
   async function scanFromVideo(){
     btnSnap.disabled = true;
+    bigScan.disabled = true;
     try{
       const cnv = takeMrzCropFromVideo();
       await ocrCanvasAndParse(cnv);
+      // titreşim ipucu (destekleyen cihazlar)
+      if('vibrate' in navigator) navigator.vibrate?.(30);
     }catch(err){
       console.error(err);
       setStatus('Hata: ' + (err.message || err));
       renderFieldsCustom({ rawLines: [] });
     }finally{
       btnSnap.disabled = !currentStream;
+      bigScan.disabled = !currentStream;
     }
   }
+
+  // ---- Otomatik tarama (stabil MRZ görünümü algıla)
+  function checkStabilityAndAuto(){
+    if(!currentStream || !autoScanChk.checked || autoBusy) return;
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if(!vw || !vh) return;
+
+    // MRZ penceresinin bölgesini küçültülmüş kanvasta karşılaştır
+    const x = Math.round(vw * 0.05);
+    const w = Math.round(vw * 0.90);
+    const h = Math.round(vh * 0.26);
+    const y = Math.round(vh * 0.66);
+
+    const scale = MOTION_W / w;
+    const mw = Math.max(60, Math.round(w * scale));
+    const mh = Math.max(30, Math.round(h * scale));
+    motionCanvas.width = mw; motionCanvas.height = mh;
+
+    const mctx = motionCanvas.getContext('2d', { willReadFrequently: true });
+    mctx.drawImage(video, x, y, w, h, 0, 0, mw, mh);
+    const img = mctx.getImageData(0, 0, mw, mh).data;
+
+    if(!lastFrame) { lastFrame = img; return; }
+
+    // piksel farkının küçük bir yüzdesi değişmişse stabil say
+    let diff = 0;
+    for(let i=0; i<img.length; i+=16){ // örnekleme (her 4. pikselin RGBA'sından sadece R'yi al)
+      const d = Math.abs(img[i] - lastFrame[i]);
+      if(d > 8) diff++;
+    }
+    lastFrame = img;
+
+    const changedRatio = diff / (img.length/16);
+    const stable = changedRatio < 0.02; // %2'den az değişim → stabil
+
+    const now = Date.now();
+    const cooldownOk = (now - lastAutoAt) > 2200; // 2.2 sn bekleme
+    if(stable && cooldownOk){
+      lastAutoAt = now;
+      autoBusy = true;
+      frameEl.classList.add('auto-active');
+      scanFromVideo().finally(()=>{
+        setTimeout(()=>{ autoBusy = false; frameEl.classList.remove('auto-active'); }, 400);
+      });
+    }
+  }
+  setInterval(checkStabilityAndAuto, 300);
 
   // ---- Resim yükleme & OCR
   fileInp.addEventListener('change', ()=>{
     const f = fileInp.files && fileInp.files[0];
     if(!f){ imgEl.style.display='none'; btnOCR.disabled=true; return; }
     const url = URL.createObjectURL(f);
-    imgEl.onload = ()=>{ URL.revokeObjectURL(url); btnOCR.disabled=false; video.style.display='none'; imgEl.style.display='block'; setStatus('Görsel yüklendi. "Yüklenen Resmi Tara"ya bas.'); };
+    imgEl.onload = ()=>{
+      URL.revokeObjectURL(url);
+      btnOCR.disabled=false;
+      video.style.display='none';
+      imgEl.style.display='block';
+      setStatus('Görsel yüklendi. "Yüklenen Resmi Tara"ya bas.');
+    };
     imgEl.src = url;
   });
   btnOCR.addEventListener('click', async ()=>{
@@ -747,6 +890,7 @@
       btnOCR.disabled = true;
       const cnv = takeMrzCropFromImage();
       await ocrCanvasAndParse(cnv);
+      if('vibrate' in navigator) navigator.vibrate?.(20);
     }catch(err){
       console.error(err);
       setStatus('Hata: ' + (err.message || err));
@@ -779,6 +923,18 @@
   btnOpen.addEventListener('click', openCamera);
   btnStop.addEventListener('click', stopAll);
   btnSnap.addEventListener('click', scanFromVideo);
+
+  // Yeni kısayollar ve büyük buton
+  frameEl.addEventListener('click', (e)=>{
+    // Video alanına dokunarak tara (FAB üzerine tıklamalar hariç)
+    const isButton = e.target.closest('button') || e.target.closest('label');
+    if(isButton) return;
+    if(currentStream) scanFromVideo();
+  });
+  bigScan.addEventListener('click', ()=>{ if(currentStream) scanFromVideo(); });
+  document.addEventListener('keydown', (e)=>{
+    if(e.code === 'Space'){ e.preventDefault(); if(currentStream) scanFromVideo(); }
+  });
 
   (async function init(){
     setStatus('Kameralar listeleniyor…');
