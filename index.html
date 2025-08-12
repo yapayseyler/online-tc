@@ -86,18 +86,7 @@
       position: absolute; left: 5%; right: 5%; height: 26%; bottom: 8%;
       border: 2px dashed var(--accent-2); border-radius: 8px;
       box-shadow: 0 0 0 200vmax #0000 inset;
-      transition: border-color .2s ease, box-shadow .2s ease;
     }
-    /* Durum renkleri */
-    .mrz-window.ok {
-      border-color: #22c55e;            /* yeşil */
-      box-shadow: 0 0 0 200vmax #0000 inset, 0 0 0 2px #22c55e33;
-    }
-    .mrz-window.bad {
-      border-color: #ef4444;            /* kırmızı */
-      box-shadow: 0 0 0 200vmax #0000 inset, 0 0 0 2px #ef444433;
-    }
-
     #tapOverlay {
       display: none; position: absolute; inset: 0; align-items: center; justify-content: center; background: #0006; border-radius: 10px;
     }
@@ -177,7 +166,7 @@
             <video id="video" autoplay playsinline></video>
             <img id="img" alt="Yüklenen görsel" />
             <div id="tapOverlay"><button id="btnTap">Videoyu Başlat</button></div>
-            <div class="mrz-window" id="mrzWindow" title="MRZ penceresi"></div>
+            <div class="mrz-window" title="MRZ penceresi"></div>
           </div>
           <div class="hint">
             • Sadece <b>arka yüzdeki, &lt; karakterleri içeren MRZ alanını</b> okuyoruz.<br/>
@@ -282,7 +271,6 @@
   const statusEl = $('#status');
   const rawText = $('#rawText');
   const fieldsEl = $('#fields');
-  const mrzWindow = $('#mrzWindow');
 
   const btnOpen = $('#btnOpen');
   const btnStop = $('#btnStop');
@@ -316,27 +304,6 @@
 
   function setStatus(t){ statusEl.textContent = t; }
   function log(){ /* console.log.apply(console, arguments); */ }
-
-  /* ==== MRZ PENCERESİ DURUM YÖNETİMİ ==== */
-  function setMrzState(state){
-    // state: 'idle' | 'ok' | 'bad'
-    mrzWindow.classList.remove('ok','bad');
-    if(state === 'ok') mrzWindow.classList.add('ok');
-    else if(state === 'bad') mrzWindow.classList.add('bad');
-    // 'idle' = varsayılan mavi (sınıf yok)
-  }
-  // Başlangıç mavi
-  setMrzState('idle');
-
-  // Form anlık değiştiğinde rengi güncelle (elle düzeltme de etkilesin)
-  function refreshMrzStateFromForm(){
-    const tcknOk = validateTCKN(inpTCKN.value.trim());
-    const dobOk  = validateDateISO(inpDOB.value.trim());
-    const adOk   = !!inpName.value.trim();
-    const soyOk  = !!inpSurname.value.trim();
-    const allOk  = tcknOk && dobOk && adOk && soyOk;
-    setMrzState(allOk ? 'ok' : 'bad');
-  }
 
   // ---- Cihaz seçimi: normal arka kamera öncelikli (balık gözünü ele)
   function scoreDevice(d){
@@ -375,7 +342,6 @@
     btnSnap.disabled = true;
     btnStop.disabled = true;
     video.srcObject = null;
-    setMrzState('idle'); // kamera kapatılınca varsayılana dön
   }
 
   async function openCamera(){
@@ -416,7 +382,6 @@
       setStatus(`Kamera açık: ${(dev.label||'seçili cihaz')}. MRZ penceresine hizala ve Tara.`);
       btnSnap.disabled = false;
       btnStop.disabled = false;
-      setMrzState('idle'); // yeni oturumda mavi
       return true;
     }catch(e){
       setStatus('Kamera açılamadı: ' + e.message);
@@ -502,7 +467,6 @@
     if(!obj || !obj.rawLines || obj.rawLines.length === 0){
       fieldsEl.innerHTML = '<div class="hint">MRZ satırları bulunamadı. Daha net hizalayarak tekrar deneyin.</div>';
       fillEditForm(); // boşalt
-      setMrzState('bad'); // okuma yapılamadı → kırmızı
       return;
     }
     row('1. Satır', obj.rawLines[0]||'');
@@ -533,9 +497,6 @@
       soyad: obj.soyad || '',
       dob: obj.birthISO || ''
     });
-
-    // Form dolduktan sonra durum rengini güncelle
-    refreshMrzStateFromForm();
   }
 
   function fillEditForm(data){
@@ -562,6 +523,7 @@
     if(!m) return false;
     const d = new Date(s);
     if(Number.isNaN(d.getTime())) return false;
+    // ay/gün eşleşmesi (Date leniency'i kapatmak için)
     const [yy,mm,dd] = [d.getUTCFullYear(), d.getUTCMonth()+1, d.getUTCDate()];
     return (String(yy).padStart(4,'0') === m[1] && String(mm).padStart(2,'0') === m[2] && String(dd).padStart(2,'0') === m[3]);
   }
@@ -594,10 +556,6 @@
     validityTag.textContent = 'Geçerlilik: ' + (ok ? 'Uygun' : 'Hatalı Alanlar Var');
     validityTag.className = 'tag ' + (ok ? 'ok' : 'bad');
     btnSave.disabled = !ok;
-
-    // Form her doğrulandığında MRZ penceresi rengini güncelle
-    refreshMrzStateFromForm();
-
     return ok;
   }
 
@@ -663,6 +621,7 @@
         saveStore(data);
       }
     }else if(act === 'edit'){
+      // seçilen kaydı forma yükle
       const r = data[i];
       fillEditForm({ tckn:r.tckn, ad:r.ad, soyad:r.soyad, dob:r.dob });
       window.scrollTo({ top: document.body.scrollHeight*0.33, behavior:'smooth' });
@@ -719,15 +678,17 @@
   }
 
   function takeMrzCropFromImage(){
+    // Yüklenen görselin tamamında OCR yapalım; MRZ satırlarını filtreleyeceğiz
     const w = imgEl.naturalWidth;
     const h = imgEl.naturalHeight;
     if(!w || !h) throw new Error('Görsel yüklenemedi.');
-    const scale = Math.min(1, 1600 / Math.max(w,h));
+    const scale = Math.min(1, 1600 / Math.max(w,h)); // hız için gerekirse küçült
     canvas.width = Math.round(w*scale);
     canvas.height= Math.round(h*scale);
     const ctx = canvas.getContext('2d');
     ctx.drawImage(imgEl, 0, 0, canvas.width, canvas.height);
     return canvas;
+    // Not: İstersen MRZ bölgesini heuristikle alabilirim; şimdilik tamamı üzerinde OCR yapıp '<' içeren satırları seçiyoruz.
   }
 
   async function ocrCanvasAndParse(cnv){
@@ -752,6 +713,7 @@
       renderFieldsCustom({ rawLines: [] });
       return;
     }
+    // 3 satıra zorlama (yoksa elde olanla)
     const block = lines.slice(-3);
     const parsed = parseCustomFields(block);
     renderFieldsCustom(parsed);
@@ -777,7 +739,7 @@
     const f = fileInp.files && fileInp.files[0];
     if(!f){ imgEl.style.display='none'; btnOCR.disabled=true; return; }
     const url = URL.createObjectURL(f);
-    imgEl.onload = ()=>{ URL.revokeObjectURL(url); btnOCR.disabled=false; video.style.display='none'; imgEl.style.display='block'; setStatus('Görsel yüklendi. "Yüklenen Resmi Tara"ya bas.'); setMrzState('idle'); };
+    imgEl.onload = ()=>{ URL.revokeObjectURL(url); btnOCR.disabled=false; video.style.display='none'; imgEl.style.display='block'; setStatus('Görsel yüklendi. "Yüklenen Resmi Tara"ya bas.'); };
     imgEl.src = url;
   });
   btnOCR.addEventListener('click', async ()=>{
@@ -807,12 +769,10 @@
     data.push(rec);
     saveStore(data);
     alert('Kayıt eklendi.');
-    refreshMrzStateFromForm(); // kayıt sonrası da renk tutarlı kalsın
   });
 
   btnClear.addEventListener('click', ()=>{
     fillEditForm({ tckn:'', ad:'', soyad:'', dob:'' });
-    setMrzState('bad'); // alanlar boş → kırmızı
   });
 
   // ---- Kamera & genel olaylar
@@ -826,7 +786,6 @@
     setStatus('Hazır. Kamera ile tara veya bir resim yükle.');
     renderTable();
     validateForm();
-    setMrzState('idle');
   })();
 })();
 </script>
