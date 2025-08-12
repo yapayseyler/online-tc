@@ -11,7 +11,9 @@
     header h1 { font-size:16px; margin:0; color:#cfe1ff; }
     .ctrls { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
     select, button, label, input { font-size:14px; }
-    select, button, input[type=file] { border:1px solid #2a3547; background:#162032; color:#e6eef8; padding:8px 12px; border-radius:10px; }
+    select, button, input[type=file], input[type=text], input[type=date] {
+      border:1px solid #2a3547; background:#162032; color:#e6eef8; padding:8px 12px; border-radius:10px;
+    }
     input[type=file]::-webkit-file-upload-button{ border:0; padding:8px 12px; margin-right:8px; background:#0f172a; color:#e6eef8; border-radius:10px; }
     button { cursor:pointer; font-weight:600; }
     button:disabled{opacity:.6; cursor:not-allowed;}
@@ -37,6 +39,18 @@
     #tapOverlay button{ background:#0d6efd; border:0; padding:10px 14px; border-radius:10px; color:#fff; font-weight:700; }
     .ok{ color:#22c55e; font-weight:700; }
     .bad{ color:#ef4444; font-weight:700; }
+    /* Düzenleme Formu */
+    .form { display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
+    .form .full { grid-column: 1 / -1; }
+    .form label { display:flex; flex-direction:column; gap:6px; }
+    .error { font-size:12px; color:#f87171; }
+    .muted { color:#9bb0c9; font-size:12px; }
+    /* Kayıt Tablosu */
+    table { width:100%; border-collapse: collapse; }
+    th, td { text-align:left; padding:8px 10px; border-bottom:1px dashed #223049; font-size:14px; }
+    th { color:#b9c8da; font-weight:700; }
+    .toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:8px; }
+    .tag { font-size:12px; padding:2px 8px; border-radius:999px; border:1px solid #2a3547; background:#121a29; }
   </style>
   <!-- Tesseract.js (OCR) -->
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
@@ -69,9 +83,9 @@
           <div class="mrz-window" title="MRZ penceresi"></div>
         </div>
         <div class="hint">
-          • Sadece **arka yüzdeki, &lt; karakterleri içeren MRZ alanını** okuyoruz.<br/>
-          • 1. satır **sağ uç**: <b>11 haneli TCKN</b>.<br/>
-          • 2. satır **sol baş 6 hane**: <b>YY A A GG</b> (yıl-ay-gün). 00–29 → 20YY, 30–99 → 19YY olarak genişletilir.<br/>
+          • Sadece <b>arka yüzdeki, &lt; karakterleri içeren MRZ alanını</b> okuyoruz.<br/>
+          • 1. satır <b>sağ uç</b>: <b>11 haneli TCKN</b>.<br/>
+          • 2. satır <b>sol baş 6 hane</b>: <b>YY A A GG</b> (yıl-ay-gün). 00–29 → 20YY, 30–99 → 19YY olarak genişletilir.<br/>
           • 3. satır: <b>SOYAD&lt;&lt;AD</b> şemasına göre ayrıştırılır.
         </div>
         <canvas id="canvas" style="display:none;"></canvas>
@@ -88,10 +102,74 @@
         <div id="fields"></div>
       </div>
     </section>
+
+    <!-- Düzenleme / Kaydet Bölümü -->
+    <section class="panel">
+      <h2>Alanları Düzenle ve Kaydet</h2>
+      <div class="content grid">
+        <div class="form full" id="editForm">
+          <label>
+            T.C. Kimlik No
+            <input type="text" id="inpTCKN" inputmode="numeric" maxlength="11" placeholder="11 hane" />
+            <span id="errTCKN" class="error" style="display:none;"></span>
+          </label>
+          <label>
+            Doğum Tarihi
+            <input type="date" id="inpDOB" />
+            <span id="errDOB" class="error" style="display:none;"></span>
+          </label>
+          <label class="full">
+            Ad
+            <input type="text" id="inpName" placeholder="AD" />
+          </label>
+          <label class="full">
+            Soyad
+            <input type="text" id="inpSurname" placeholder="SOYAD" />
+          </label>
+        </div>
+        <div class="toolbar">
+          <button id="btnSave" disabled>Kaydet</button>
+          <button id="btnClear">Temizle</button>
+          <span class="tag" id="validityTag">Geçerlilik: —</span>
+          <span class="muted">Kaydetmeden önce alanları elle düzeltebilirsin.</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Kayıtlar -->
+    <section class="panel">
+      <h2>Kayıtlar (Tarayıcıda Yerel)</h2>
+      <div class="content">
+        <div class="toolbar">
+          <button id="btnExportCSV">CSV Dışa Aktar</button>
+          <button id="btnExportJSON">JSON Dışa Aktar</button>
+          <button id="btnClearAll">Tümünü Sil</button>
+          <span class="muted" id="storeInfo"></span>
+        </div>
+        <div style="overflow:auto;">
+          <table id="tbl">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>TCKN</th>
+                <th>Ad</th>
+                <th>Soyad</th>
+                <th>Doğum Tarihi</th>
+                <th>Durum</th>
+                <th>İşlem</th>
+              </tr>
+            </thead>
+            <tbody id="tblBody">
+              <tr><td colspan="7" class="muted">Henüz kayıt yok.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
   </main>
 
   <footer>
-    OCR: Tesseract.js. Sadece &lt; içeren MRZ satırlarını işler ve TCKN/Doğum/İsim bilgilerini özel kurallarla çıkarır.
+    OCR: Tesseract.js. Sadece &lt; içeren MRZ satırlarını işler ve TCKN/Doğum/İsim bilgilerini özel kurallarla çıkarır. Aşağıdaki formdan elle düzenleyip kaydedebilirsiniz.
   </footer>
 
 <script>
@@ -112,9 +190,28 @@
   const fileInp = $('#file');
   const btnOCR = $('#btnOCR');
 
+  // Düzenleme & kayıt elemanları
+  const inpTCKN = $('#inpTCKN');
+  const inpDOB = $('#inpDOB');
+  const inpName = $('#inpName');
+  const inpSurname = $('#inpSurname');
+  const errTCKN = $('#errTCKN');
+  const errDOB = $('#errDOB');
+  const btnSave = $('#btnSave');
+  const btnClear = $('#btnClear');
+  const validityTag = $('#validityTag');
+
+  const tblBody = $('#tblBody');
+  const btnExportCSV = $('#btnExportCSV');
+  const btnExportJSON = $('#btnExportJSON');
+  const btnClearAll = $('#btnClearAll');
+  const storeInfo = $('#storeInfo');
+
   let currentStream = null;
   let devices = [];
   let deviceIndex = 0;
+
+  const STORAGE_KEY = 'mrzKayitlar';
 
   function setStatus(t){ statusEl.textContent = t; }
   function log(){ /* console.log.apply(console, arguments); */ }
@@ -256,7 +353,6 @@
       const parts = L3.split('<<');
       const soy = (parts[0] || '').replace(/<+/g,' ').trim();
       let ad = (parts[1] || '').replace(/<+/g,' ').trim();
-      // Çoklu ad varsa boşluklarla bırak
       res.soyad = soy || undefined;
       res.ad    = ad   || undefined;
     }
@@ -281,6 +377,7 @@
 
     if(!obj || !obj.rawLines || obj.rawLines.length === 0){
       fieldsEl.innerHTML = '<div class="hint">MRZ satırları bulunamadı. Daha net hizalayarak tekrar deneyin.</div>';
+      fillEditForm(); // boşalt
       return;
     }
     row('1. Satır', obj.rawLines[0]||'');
@@ -303,8 +400,180 @@
     row('Ad',    obj.ad    || '<span class="bad">—</span>');
 
     fieldsEl.innerHTML = kv.join('');
+
+    // OCR sonuçlarını düzenleme formuna doldur
+    fillEditForm({
+      tckn: obj.tcKimlik || '',
+      ad: obj.ad || '',
+      soyad: obj.soyad || '',
+      dob: obj.birthISO || ''
+    });
   }
 
+  function fillEditForm(data){
+    inpTCKN.value = data?.tckn ?? '';
+    inpName.value = data?.ad ?? '';
+    inpSurname.value = data?.soyad ?? '';
+    inpDOB.value = data?.dob ?? '';
+    validateForm();
+  }
+
+  function setFieldError(elErr, msg){
+    if(msg){
+      elErr.textContent = msg;
+      elErr.style.display = 'block';
+    }else{
+      elErr.textContent = '';
+      elErr.style.display = 'none';
+    }
+  }
+
+  function validateDateISO(s){
+    if(!s) return false;
+    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if(!m) return false;
+    const d = new Date(s);
+    if(Number.isNaN(d.getTime())) return false;
+    // ay/gün eşleşmesi (Date leniency'i kapatmak için)
+    const [yy,mm,dd] = [d.getUTCFullYear(), d.getUTCMonth()+1, d.getUTCDate()];
+    return (String(yy).padStart(4,'0') === m[1] && String(mm).padStart(2,'0') === m[2] && String(dd).padStart(2,'0') === m[3]);
+  }
+
+  function validateForm(){
+    const tckn = inpTCKN.value.trim();
+    const dob  = inpDOB.value.trim();
+    let ok = true;
+
+    if(tckn && !validateTCKN(tckn)){
+      setFieldError(errTCKN, 'TCKN geçersiz görünüyor. Yine de kaydetmeden önce düzeltmelisin.');
+      ok = false;
+    }else if(!tckn){
+      setFieldError(errTCKN, 'TCKN boş olamaz.');
+      ok = false;
+    }else{
+      setFieldError(errTCKN, '');
+    }
+
+    if(dob && !validateDateISO(dob)){
+      setFieldError(errDOB, 'Doğum tarihi geçersiz.');
+      ok = false;
+    }else if(!dob){
+      setFieldError(errDOB, 'Doğum tarihi boş olamaz.');
+      ok = false;
+    }else{
+      setFieldError(errDOB, '');
+    }
+
+    validityTag.textContent = 'Geçerlilik: ' + (ok ? 'Uygun' : 'Hatalı Alanlar Var');
+    validityTag.className = 'tag ' + (ok ? 'ok' : 'bad');
+    btnSave.disabled = !ok;
+    return ok;
+  }
+
+  function getFormData(){
+    return {
+      tckn: inpTCKN.value.trim(),
+      ad: inpName.value.trim(),
+      soyad: inpSurname.value.trim(),
+      dob: inpDOB.value.trim(),
+      ts: new Date().toISOString()
+    };
+  }
+
+  // ---- Kayıt yönetimi (localStorage)
+  function loadStore(){
+    try{
+      return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+    }catch(_){
+      return [];
+    }
+  }
+  function saveStore(arr){
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(arr));
+    renderTable();
+  }
+
+  function renderTable(){
+    const data = loadStore();
+    storeInfo.textContent = `Toplam kayıt: ${data.length}`;
+    tblBody.innerHTML = '';
+    if(data.length === 0){
+      tblBody.innerHTML = '<tr><td colspan="7" class="muted">Henüz kayıt yok.</td></tr>';
+      return;
+    }
+    data.forEach((row, idx)=>{
+      const tr = document.createElement('tr');
+      const ok = validateTCKN(row.tckn) && validateDateISO(row.dob);
+      tr.innerHTML = `
+        <td>${idx+1}</td>
+        <td>${row.tckn}</td>
+        <td>${row.ad||''}</td>
+        <td>${row.soyad||''}</td>
+        <td>${row.dob||''}</td>
+        <td>${ ok ? '<span class="ok">Geçerli</span>' : '<span class="bad">Uyarı</span>'}</td>
+        <td>
+          <button data-act="edit" data-i="${idx}">Düzenle</button>
+          <button data-act="del" data-i="${idx}">Sil</button>
+        </td>
+      `;
+      tblBody.appendChild(tr);
+    });
+  }
+
+  tblBody.addEventListener('click', (e)=>{
+    const btn = e.target.closest('button');
+    if(!btn) return;
+    const i = +btn.getAttribute('data-i');
+    const act = btn.getAttribute('data-act');
+    const data = loadStore();
+    if(act === 'del'){
+      if(confirm('Bu kaydı silmek istiyor musunuz?')){
+        data.splice(i,1);
+        saveStore(data);
+      }
+    }else if(act === 'edit'){
+      // seçilen kaydı forma yükle
+      const r = data[i];
+      fillEditForm({ tckn:r.tckn, ad:r.ad, soyad:r.soyad, dob:r.dob });
+      window.scrollTo({ top: document.body.scrollHeight*0.33, behavior:'smooth' });
+    }
+  });
+
+  function toCSV(rows){
+    const headers = ['TCKN','Ad','Soyad','DogumTarihi','KayitZamani'];
+    const esc = (s)=> `"${String(s??'').replace(/"/g,'""')}"`;
+    const lines = [headers.join(',')].concat(
+      rows.map(r=>[esc(r.tckn),esc(r.ad),esc(r.soyad),esc(r.dob),esc(r.ts)].join(','))
+    );
+    return lines.join('\r\n');
+  }
+
+  function download(filename, text){
+    const blob = new Blob([text], {type: 'text/plain;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename; document.body.appendChild(a); a.click();
+    setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 0);
+  }
+
+  btnExportCSV.addEventListener('click', ()=>{
+    const data = loadStore();
+    if(data.length===0) return alert('Dışa aktarılacak kayıt yok.');
+    download('mrz_kayitlar.csv', toCSV(data));
+  });
+  btnExportJSON.addEventListener('click', ()=>{
+    const data = loadStore();
+    if(data.length===0) return alert('Dışa aktarılacak kayıt yok.');
+    download('mrz_kayitlar.json', JSON.stringify(data, null, 2));
+  });
+  btnClearAll.addEventListener('click', ()=>{
+    if(confirm('TÜM kayıtlar silinecek. Emin misiniz?')){
+      localStorage.removeItem(STORAGE_KEY);
+      renderTable();
+    }
+  });
+
+  // ---- OCR akışı
   function takeMrzCropFromVideo(){
     const vw = video.videoWidth;
     const vh = video.videoHeight;
@@ -398,7 +667,26 @@
     }
   });
 
-  // ---- Olaylar
+  // ---- Form olayları
+  [inpTCKN, inpDOB, inpName, inpSurname].forEach(el=>{
+    el.addEventListener('input', validateForm);
+    el.addEventListener('blur', validateForm);
+  });
+
+  btnSave.addEventListener('click', ()=>{
+    if(!validateForm()) return;
+    const data = loadStore();
+    const rec = getFormData();
+    data.push(rec);
+    saveStore(data);
+    alert('Kayıt eklendi.');
+  });
+
+  btnClear.addEventListener('click', ()=>{
+    fillEditForm({ tckn:'', ad:'', soyad:'', dob:'' });
+  });
+
+  // ---- Kamera & genel olaylar
   btnOpen.addEventListener('click', openCamera);
   btnStop.addEventListener('click', stopAll);
   btnSnap.addEventListener('click', scanFromVideo);
@@ -407,6 +695,8 @@
     setStatus('Kameralar listeleniyor…');
     await listCameras();
     setStatus('Hazır. Kamera ile tara veya bir resim yükle.');
+    renderTable();
+    validateForm();
   })();
 })();
 </script>
