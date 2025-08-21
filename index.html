@@ -1,793 +1,834 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="tr">
 <head>
-  <meta charset="utf-8" />
-  <title>MRZ Okuyucu — Normal Arka Kamera + Özel Filtre (TCKN, Doğum, İsim)</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <style>
-    :root {
-      --bg: #0b0f14;
-      --panel: #0f1520;
-      --panel-border: #1d2633;
-      --text: #e6eef8;
-      --muted: #9bb0c9;
-      --accent: #0d6efd;
-      --accent-2: #58a6ff88;
-      --ok: #22c55e;
-      --bad: #ef4444;
-      --input-bg:#162032;
-      --input-br:#2a3547;
-      --chip-bg:#121a29;
-      --chip-br:#2a3547;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-      font-size: 16px;
-    }
-    * { box-sizing: border-box; }
-    body { margin: 0; background: var(--bg); color: var(--text); }
-
-    /* Üst çubuk */
-    header {
-      position: sticky; top: 0; z-index: 30;
-      padding: 14px 16px;
-      border-bottom: 1px solid #1f2733;
-      backdrop-filter: blur(6px);
-      background: color-mix(in oklab, var(--bg) 85%, transparent);
-    }
-    .container { max-width: 980px; margin: 0 auto; }
-    header .bar { display: grid; gap: 10px; align-items: center; }
-    header h1 { font-size: 16px; margin: 0; color: #cfe1ff; }
-
-    .ctrls {
-      display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
-    }
-
-    select, button, label, input {
-      font-size: 14px;
-    }
-    select, button, input[type=file], input[type=text], input[type=date] {
-      border: 1px solid var(--input-br);
-      background: var(--input-bg);
-      color: var(--text);
-      padding: 10px 12px;
-      border-radius: 10px;
-    }
-    input[type=file]::-webkit-file-upload-button {
-      border: 0; padding: 10px 12px; margin-right: 8px;
-      background: #0f172a; color: var(--text); border-radius: 10px;
-    }
-    button { cursor: pointer; font-weight: 600; }
-    button:disabled { opacity: .6; cursor: not-allowed; }
-    .btn-primary { background: var(--accent); border: 0; color: #fff; }
-    .btn-ghost { background: transparent; border: 1px dashed var(--input-br); }
-
-    /* Ana düzen — tek sütun, dikey akış */
-    main { padding: 16px; }
-    .stack { display: grid; gap: 16px; }
-
-    .panel {
-      background: var(--panel);
-      border: 1px solid var(--panel-border);
-      border-radius: 14px;
-      overflow: hidden;
-    }
-    .panel h2 {
-      font-size: 15px; margin: 0; padding: 12px 14px;
-      border-bottom: 1px solid var(--panel-border); color: #b9c8da;
-      display: flex; align-items: center; gap: 8px;
-    }
-    .panel h2 .sub { font-weight: 400; color: var(--muted); font-size: 12px; }
-    .content { padding: 12px; display: grid; gap: 12px; }
-
-    /* Görsel alan */
-    #video { width: 100%; border-radius: 10px; background: #000; }
-    #img { max-width: 100%; display: none; border-radius: 10px; }
-    .frame { position: relative; }
-    .mrz-window {
-      position: absolute; left: 5%; right: 5%; height: 26%; bottom: 8%;
-      border: 2px dashed var(--accent-2); border-radius: 8px;
-      box-shadow: 0 0 0 200vmax #0000 inset;
-    }
-    #tapOverlay {
-      display: none; position: absolute; inset: 0; align-items: center; justify-content: center; background: #0006; border-radius: 10px;
-    }
-    #tapOverlay button { background: var(--accent); border: 0; padding: 10px 14px; border-radius: 10px; color: #fff; font-weight: 700; }
-
-    .hint { font-size: 12px; color: var(--muted); line-height: 1.6; }
-    pre { white-space: pre-wrap; background: #0c111b; padding: 10px; border-radius: 10px; border: 1px solid var(--panel-border); }
-
-    /* Sonuç alanı: key-value list */
-    .kv { display: grid; grid-template-columns: 160px 1fr; gap: 6px; font-size: 14px; padding: 8px 10px; border-bottom: 1px dashed #223049; }
-    .kv b { color: #cfe1ff; }
-
-    /* Form */
-    .form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-    .form .full { grid-column: 1 / -1; }
-    .form label { display: grid; gap: 6px; }
-    .error { font-size: 12px; color: #f87171; }
-    .muted { color: var(--muted); font-size: 12px; }
-
-    /* Araç çubuğu / chip */
-    .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-    .tag { font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--chip-br); background: var(--chip-bg); }
-    .ok { color: var(--ok); font-weight: 700; }
-    .bad { color: var(--bad); font-weight: 700; }
-
-    /* Tablo */
-    table { width: 100%; border-collapse: collapse; }
-    th, td { text-align: left; padding: 10px 10px; border-bottom: 1px dashed #223049; font-size: 14px; }
-    th { color: #b9c8da; font-weight: 700; }
-    table button { padding: 6px 10px; }
-
-    footer {
-      padding: 14px 16px; font-size: 12px; color: #8fa8c7; border-top: 1px solid #1f2733;
-    }
-
-    /* Küçük ekran iyileştirmeleri */
-    @media (max-width: 640px) {
-      header .bar { gap: 8px; }
-      .kv { grid-template-columns: 120px 1fr; }
-      .form { grid-template-columns: 1fr; }
-      .ctrls > * { flex: 1 1 auto; }
-      .ctrls span { flex: 0 0 auto; }
-      .toolbar > *:not(.muted) { flex: 0 0 auto; }
-      .btn-primary, .btn-ghost { width: 100%; }
-    }
-  </style>
-  <!-- Tesseract.js (OCR) -->
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TC Kimlik MRZ Anlık Tarayıcı</title>
+    <script src="https://unpkg.com/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            opacity: 0.9;
+            font-size: 16px;
+        }
+        
+        .content {
+            padding: 30px;
+        }
+        
+        /* Kamera Alanı */
+        .camera-section {
+            margin-bottom: 30px;
+        }
+        
+        .video-container {
+            position: relative;
+            width: 100%;
+            background: #000;
+            border-radius: 15px;
+            overflow: hidden;
+            margin-bottom: 20px;
+        }
+        
+        #video {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+        
+        .camera-overlay {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            right: 20px;
+            background: rgba(0,0,0,0.8);
+            color: white;
+            padding: 15px;
+            border-radius: 15px;
+            text-align: center;
+        }
+        
+        .mrz-guide {
+            position: absolute;
+            bottom: 60px;
+            left: 20px;
+            right: 20px;
+            height: 80px;
+            border: 3px solid #00ff00;
+            border-radius: 10px;
+            background: rgba(0, 255, 0, 0.1);
+        }
+        
+        .mrz-guide-text {
+            position: absolute;
+            top: -30px;
+            left: 0;
+            right: 0;
+            color: #00ff00;
+            text-align: center;
+            font-weight: bold;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+        }
+        
+        .camera-controls {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        
+        .btn {
+            padding: 12px 30px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: 600;
+        }
+        
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+        
+        .btn-primary:hover:not(:disabled) {
+            background: #5a67d8;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
+        }
+        
+        .btn-secondary {
+            background: #764ba2;
+            color: white;
+        }
+        
+        .btn-secondary:hover:not(:disabled) {
+            background: #6a3d91;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(118, 75, 162, 0.3);
+        }
+        
+        .btn-success {
+            background: #48bb78;
+            color: white;
+        }
+        
+        .btn-danger {
+            background: #f56565;
+            color: white;
+        }
+        
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+        
+        /* Status */
+        .status-bar {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #e2e8f0;
+        }
+        
+        .status-indicator.active {
+            background: #48bb78;
+            animation: pulse 2s infinite;
+        }
+        
+        .status-indicator.scanning {
+            background: #667eea;
+            animation: pulse 1s infinite;
+        }
+        
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+        
+        /* Sonuçlar */
+        .results {
+            display: none;
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 25px;
+            margin-top: 20px;
+        }
+        
+        .results.active {
+            display: block;
+        }
+        
+        .result-title {
+            font-size: 24px;
+            color: #333;
+            margin-bottom: 20px;
+            font-weight: 600;
+            text-align: center;
+            color: #48bb78;
+        }
+        
+        .result-grid {
+            display: grid;
+            gap: 15px;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        }
+        
+        .result-item {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            border-left: 4px solid #667eea;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        .result-label {
+            color: #666;
+            font-size: 14px;
+            font-weight: 500;
+            margin-bottom: 5px;
+        }
+        
+        .result-value {
+            font-weight: 700;
+            color: #333;
+            font-size: 18px;
+        }
+        
+        .mrz-text {
+            background: #2d3748;
+            color: #48bb78;
+            font-family: 'Courier New', monospace;
+            padding: 20px;
+            border-radius: 12px;
+            margin-top: 20px;
+            font-size: 14px;
+            line-height: 1.8;
+            letter-spacing: 1px;
+            word-break: break-all;
+            text-align: center;
+        }
+        
+        .mrz-line {
+            margin: 2px 0;
+        }
+        
+        /* Hata */
+        .error {
+            display: none;
+            background: #fed7d7;
+            color: #c53030;
+            padding: 20px;
+            border-radius: 10px;
+            margin-top: 20px;
+            border-left: 4px solid #f56565;
+        }
+        
+        .error.active {
+            display: block;
+        }
+        
+        /* İpuçları */
+        .tips {
+            background: #f0f7ff;
+            border-left: 4px solid #667eea;
+            padding: 20px;
+            margin-top: 20px;
+            border-radius: 10px;
+        }
+        
+        .tips-title {
+            font-weight: 600;
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 18px;
+        }
+        
+        .tips ul {
+            margin: 0;
+            padding-left: 20px;
+            color: #666;
+            line-height: 1.6;
+        }
+        
+        .tips li {
+            margin: 8px 0;
+        }
+        
+        /* Mobil uyumlu */
+        @media (max-width: 768px) {
+            .container {
+                margin: 10px;
+                border-radius: 15px;
+            }
+            
+            .content {
+                padding: 20px;
+            }
+            
+            .camera-controls {
+                gap: 10px;
+            }
+            
+            .btn {
+                padding: 10px 20px;
+                font-size: 14px;
+            }
+            
+            .result-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        #canvas {
+            display: none;
+        }
+    </style>
 </head>
 <body>
-  <header>
-    <div class="container bar">
-      <h1>MRZ Okuyucu — Normal Arka Kamera + Özel Filtre</h1>
-      <div class="ctrls">
-        <select id="camera" title="Kamera seç">
-          <option>— kameralar yükleniyor —</option>
-        </select>
-        <label><input type="checkbox" id="lowres" /> Düşük çözünürlük (1280×720)</label>
-        <button id="btnOpen" class="btn-primary">Kamerayı Aç</button>
-        <button id="btnStop" disabled>Kapat</button>
-        <button id="btnSnap" disabled>Tara</button>
-        <span>veya</span>
-        <input type="file" id="file" accept="image/*" />
-        <button id="btnOCR" disabled>Yüklenen Resmi Tara</button>
-      </div>
-    </div>
-  </header>
-
-  <main>
-    <div class="container stack">
-
-      <!-- Görüntü -->
-      <section class="panel">
-        <h2>Görüntü <span class="sub">MRZ penceresine hizalayıp “Tara”ya tıklayın</span></h2>
-        <div class="content">
-          <div class="frame">
-            <video id="video" autoplay playsinline></video>
-            <img id="img" alt="Yüklenen görsel" />
-            <div id="tapOverlay"><button id="btnTap">Videoyu Başlat</button></div>
-            <div class="mrz-window" title="MRZ penceresi"></div>
-          </div>
-          <div class="hint">
-            • Sadece <b>arka yüzdeki, &lt; karakterleri içeren MRZ alanını</b> okuyoruz.<br/>
-            • 1. satır <b>sağ uç</b>: <b>11 haneli TCKN</b>.<br/>
-            • 2. satır <b>sol baş 6 hane</b>: <b>YY A A GG</b> (yıl-ay-gün). 00–29 → 20YY, 30–99 → 19YY olarak genişletilir.<br/>
-            • 3. satır: <b>SOYAD&lt;&lt;AD</b> şemasına göre ayrıştırılır.
-          </div>
-          <canvas id="canvas" style="display:none;"></canvas>
-        </div>
-      </section>
-
-      <!-- Sonuç -->
-      <section class="panel">
-        <h2>Sonuç <span class="sub">Ham OCR & özel filtre ile çıkarılan alanlar</span></h2>
-        <div class="content">
-          <div id="status" class="hint">Hazır.</div>
-          <pre id="rawText" class="mono"></pre>
-          <div id="fields"></div>
-        </div>
-      </section>
-
-      <!-- Düzenleme / Kaydet -->
-      <section class="panel">
-        <h2>Alanları Düzenle ve Kaydet <span class="sub">Kaydetmeden önce gerekli düzeltmeleri yapın</span></h2>
-        <div class="content">
-          <div class="form" id="editForm">
-            <label>
-              T.C. Kimlik No
-              <input type="text" id="inpTCKN" inputmode="numeric" maxlength="11" placeholder="11 hane" />
-              <span id="errTCKN" class="error" style="display:none;"></span>
-            </label>
-            <label>
-              Doğum Tarihi
-              <input type="date" id="inpDOB" />
-              <span id="errDOB" class="error" style="display:none;"></span>
-            </label>
-            <label class="full">
-              Ad
-              <input type="text" id="inpName" placeholder="AD" />
-            </label>
-            <label class="full">
-              Soyad
-              <input type="text" id="inpSurname" placeholder="SOYAD" />
-            </label>
-          </div>
-          <div class="toolbar">
-            <button id="btnSave" class="btn-primary" disabled>Kaydet</button>
-            <button id="btnClear" class="btn-ghost">Temizle</button>
-            <span class="tag" id="validityTag">Geçerlilik: —</span>
-            <span class="muted">Kaydetmeden önce alanları elle düzeltebilirsin.</span>
-          </div>
-        </div>
-      </section>
-
-      <!-- Kayıtlar -->
-      <section class="panel">
-        <h2>Kayıtlar (Tarayıcıda Yerel) <span class="sub">Dışa aktarabilir veya tek tek silebilirsiniz</span></h2>
-        <div class="content">
-          <div class="toolbar">
-            <button id="btnExportCSV">CSV Dışa Aktar</button>
-            <button id="btnExportJSON">JSON Dışa Aktar</button>
-            <button id="btnClearAll" class="btn-ghost">Tümünü Sil</button>
-            <span class="muted" id="storeInfo"></span>
-          </div>
-          <div style="overflow:auto;">
-            <table id="tbl">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>TCKN</th>
-                  <th>Ad</th>
-                  <th>Soyad</th>
-                  <th>Doğum Tarihi</th>
-                  <th>Durum</th>
-                  <th>İşlem</th>
-                </tr>
-              </thead>
-              <tbody id="tblBody">
-                <tr><td colspan="7" class="muted">Henüz kayıt yok.</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-    </div>
-  </main>
-
-  <footer>
     <div class="container">
-      OCR: Tesseract.js. Sadece &lt; içeren MRZ satırlarını işler ve TCKN/Doğum/İsim bilgilerini özel kurallarla çıkarır. Aşağıdaki formdan elle düzenleyip kaydedebilirsiniz.
+        <div class="header">
+            <h1>📱 TC Kimlik MRZ Anlık Tarayıcı</h1>
+            <p>Kimliğin arka yüzünü kameraya tutun - Otomatik tarama</p>
+        </div>
+        
+        <div class="content">
+            <!-- Durum Çubuğu -->
+            <div class="status-bar">
+                <div class="status-indicator" id="statusIndicator"></div>
+                <span id="statusText">Kamera başlatılıyor...</span>
+            </div>
+            
+            <!-- Kamera Alanı -->
+            <div class="camera-section">
+                <div class="video-container" id="videoContainer" style="display: none;">
+                    <video id="video" autoplay playsinline></video>
+                    <div class="camera-overlay">
+                        <div>🎯 Kimliğin arka yüzünü MRZ rehberinin içine hizalayın</div>
+                    </div>
+                    <div class="mrz-guide">
+                        <div class="mrz-guide-text">MRZ ALANI - 3 SATIR BURADA OLMALI</div>
+                    </div>
+                </div>
+                
+                <div class="camera-controls">
+                    <button class="btn btn-primary" id="startCameraBtn" onclick="startCamera()">
+                        📷 Kamerayı Başlat
+                    </button>
+                    <button class="btn btn-success" id="scanBtn" onclick="toggleScanning()" style="display: none;">
+                        🔍 Taramaya Başla
+                    </button>
+                    <button class="btn btn-secondary" id="captureBtn" onclick="captureImage()" style="display: none;">
+                        📸 Fotoğraf Çek
+                    </button>
+                    <button class="btn btn-danger" id="stopBtn" onclick="stopCamera()" style="display: none;">
+                        ⏹️ Durdur
+                    </button>
+                </div>
+            </div>
+            
+            <canvas id="canvas"></canvas>
+            
+            <!-- Hata -->
+            <div class="error" id="error"></div>
+            
+            <!-- Sonuçlar -->
+            <div class="results" id="results">
+                <div class="result-title">✅ Kimlik Bilgileri Başarıyla Okundu</div>
+                
+                <div class="result-grid">
+                    <div class="result-item">
+                        <div class="result-label">TC Kimlik Numarası</div>
+                        <div class="result-value" id="tcNo">-</div>
+                    </div>
+                    
+                    <div class="result-item">
+                        <div class="result-label">Ad</div>
+                        <div class="result-value" id="firstName">-</div>
+                    </div>
+                    
+                    <div class="result-item">
+                        <div class="result-label">Soyad</div>
+                        <div class="result-value" id="lastName">-</div>
+                    </div>
+                    
+                    <div class="result-item">
+                        <div class="result-label">Doğum Tarihi</div>
+                        <div class="result-value" id="birthDate">-</div>
+                    </div>
+                    
+                    <div class="result-item">
+                        <div class="result-label">Cinsiyet</div>
+                        <div class="result-value" id="gender">-</div>
+                    </div>
+                    
+                    <div class="result-item">
+                        <div class="result-label">Son Geçerlilik Tarihi</div>
+                        <div class="result-value" id="expiryDate">-</div>
+                    </div>
+                </div>
+                
+                <div class="mrz-text" id="mrzText"></div>
+                
+                <div style="text-align: center; margin-top: 20px;">
+                    <button class="btn btn-primary" onclick="resetApp()">
+                        🔄 Yeni Tarama Yap
+                    </button>
+                </div>
+            </div>
+            
+            <!-- İpuçları -->
+            <div class="tips">
+                <div class="tips-title">💡 En İyi Sonuç İçin:</div>
+                <ul>
+                    <li><strong>Kimliğin arka yüzünü</strong> yeşil çerçeveye hizalayın</li>
+                    <li>MRZ kodu (alt kısımdaki 3 satır) <strong>net görünsün</strong></li>
+                    <li><strong>İyi ışıkta</strong>, gölgesiz fotoğraf çekin</li>
+                    <li>Kamera <strong>paralel olsun</strong>, açıdan çekmeyin</li>
+                    <li><strong>Sabit tutun</strong> - hareket etmeyin</li>
+                </ul>
+            </div>
+        </div>
     </div>
-  </footer>
 
-<script>
-(function(){
-  const $ = (q)=>document.querySelector(q);
-
-  const video = $('#video');
-  const imgEl = $('#img');
-  const canvas= $('#canvas');
-  const statusEl = $('#status');
-  const rawText = $('#rawText');
-  const fieldsEl = $('#fields');
-
-  const btnOpen = $('#btnOpen');
-  const btnStop = $('#btnStop');
-  const btnSnap = $('#btnSnap');
-  const selCamera = $('#camera');
-  const fileInp = $('#file');
-  const btnOCR = $('#btnOCR');
-
-  // Düzenleme & kayıt elemanları
-  const inpTCKN = $('#inpTCKN');
-  const inpDOB = $('#inpDOB');
-  const inpName = $('#inpName');
-  const inpSurname = $('#inpSurname');
-  const errTCKN = $('#errTCKN');
-  const errDOB = $('#errDOB');
-  const btnSave = $('#btnSave');
-  const btnClear = $('#btnClear');
-  const validityTag = $('#validityTag');
-
-  const tblBody = $('#tblBody');
-  const btnExportCSV = $('#btnExportCSV');
-  const btnExportJSON = $('#btnExportJSON');
-  const btnClearAll = $('#btnClearAll');
-  const storeInfo = $('#storeInfo');
-
-  let currentStream = null;
-  let devices = [];
-  let deviceIndex = 0;
-
-  const STORAGE_KEY = 'mrzKayitlar';
-
-  function setStatus(t){ statusEl.textContent = t; }
-  function log(){ /* console.log.apply(console, arguments); */ }
-
-  // ---- Cihaz seçimi: normal arka kamera öncelikli (balık gözünü ele)
-  function scoreDevice(d){
-    const L = (d.label||'').toLowerCase();
-    let s = 0;
-    if (/back|rear|environment|main|standard|regular/.test(L)) s += 8;
-    if (/camera\s*0\b/.test(L)) s += 2;
-    if (/front|user|selfie/.test(L)) s -= 6;
-    if (/ultra[-\s]?wide|\buw\b|super[-\s]?wide|fisheye|macro|depth|bokeh|wide\s*angle/.test(L)) s -= 8;
-    return s;
-  }
-  function preferBack(list){ return list.slice().sort((a,b)=> scoreDevice(b) - scoreDevice(a)); }
-
-  async function listCameras(){
-    try{
-      const tmp = await navigator.mediaDevices.getUserMedia({video:true,audio:false});
-      tmp.getTracks().forEach(t=>t.stop());
-    }catch(_){}
-    let all = await navigator.mediaDevices.enumerateDevices();
-    all = all.filter(d=>d.kind==='videoinput');
-    devices = preferBack(all);
-    selCamera.innerHTML = '';
-    devices.forEach((d,i)=>{
-      const o=document.createElement('option');
-      o.value = i;
-      o.textContent = d.label || `Kamera ${i+1}`;
-      selCamera.appendChild(o);
-    });
-    deviceIndex = 0;
-    selCamera.value = String(deviceIndex);
-  }
-
-  async function stopAll(){
-    if(currentStream){ currentStream.getTracks().forEach(t=>t.stop()); }
-    currentStream = null;
-    btnSnap.disabled = true;
-    btnStop.disabled = true;
-    video.srcObject = null;
-  }
-
-  async function openCamera(){
-    await stopAll();
-    imgEl.style.display='none'; video.style.display='block';
-
-    const dev = devices[deviceIndex];
-    if(!dev){ setStatus('Kamera bulunamadı.'); return false; }
-
-    const low = $('#lowres').checked;
-    const constraints = {
-      video: {
-        deviceId: { exact: dev.deviceId },
-        facingMode: 'environment',
-        width:  low ? { ideal: 1280 } : { ideal: 1920 },
-        height: low ? { ideal: 720  } : { ideal: 1080 },
-        frameRate: { ideal: 30 },
-        advanced: [{ focusMode: 'continuous' }]
-      },
-      audio: false
-    };
-
-    setStatus('Kamera açılıyor…');
-    try{
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      currentStream = stream;
-      video.srcObject = stream;
-
-      try{
-        await video.play();
-        $('#tapOverlay').style.display='none';
-      }catch(_){
-        $('#tapOverlay').style.display='flex';
-        $('#btnTap').onclick = ()=> video.play().then(()=> $('#tapOverlay').style.display='none');
-      }
-
-      video.style.transform = '';
-      setStatus(`Kamera açık: ${(dev.label||'seçili cihaz')}. MRZ penceresine hizala ve Tara.`);
-      btnSnap.disabled = false;
-      btnStop.disabled = false;
-      return true;
-    }catch(e){
-      setStatus('Kamera açılamadı: ' + e.message);
-      return false;
-    }
-  }
-
-  document.addEventListener('change', async (ev)=>{
-    if(ev.target && ev.target.id === 'camera'){
-      deviceIndex = +ev.target.value || 0;
-      if(devices[deviceIndex]){ await openCamera(); }
-    }
-  });
-
-  // ---- OCR yardımcıları
-  function normalizeMrzText(t){
-    const keep = /[A-Z0-9<\n]/g;
-    const up = (t || '').toUpperCase().match(keep)?.join('') || '';
-    return up.replace(/ /g,'').replace(/\u00A0/g,'');
-  }
-  function pickMrzLines(text){
-    // Sadece "<" içeren ve makul uzunlukta satırlar
-    const lines = text.split(/\n+/).map(s => s.trim()).filter(Boolean);
-    const onlyMrz = lines.filter(s => s.includes('<') && s.length >= 20);
-    // En alttaki 3 satır genellikle doğru bloktur
-    return onlyMrz.slice(-3);
-  }
-
-  // ---- ÖZEL KURALLAR (TCKN, Doğum, İsim)
-  function expandYearYY(yy){
-    const n = parseInt(yy,10);
-    return (n <= 29 ? 2000 + n : 1900 + n);
-  }
-  function parseCustomFields(lines){
-    const res = { rawLines: lines };
-
-    const L1 = lines[0] || '';
-    const L2 = lines[1] || '';
-    const L3 = lines[2] || '';
-
-    // 1) TCKN: 1. satırın en sağında 11 rakam
-    const mId = L1.match(/(\d{11})\D*$/);
-    if(mId){ res.tcKimlik = mId[1]; res.tcValid = validateTCKN(mId[1]); }
-
-    // 2) Doğum tarihi: 2. satırın sol başında 6 hane (YYAAGG)
-    const mDob = L2.match(/^(\d{6})/);
-    if(mDob){
-      const yy = mDob[1].slice(0,2);
-      const mm = mDob[1].slice(2,4);
-      const dd = mDob[1].slice(4,6);
-      const yyyy = expandYearYY(yy);
-      res.birthY = yyyy; res.birthM = mm; res.birthD = dd;
-      res.birthISO = `${yyyy}-${mm}-${dd}`;
-    }
-
-    // 3) Soyad / Ad: 3. satır SOYAD<<AD…
-    if(L3){
-      const parts = L3.split('<<');
-      const soy = (parts[0] || '').replace(/<+/g,' ').trim();
-      let ad = (parts[1] || '').replace(/<+/g,' ').trim();
-      res.soyad = soy || undefined;
-      res.ad    = ad   || undefined;
-    }
-    return res;
-  }
-
-  // TCKN doğrulama (11 hane, ilk hane ≠ 0, 10. ve 11. kontrol)
-  function validateTCKN(id){
-    if(!/^[1-9]\d{10}$/.test(id)) return false;
-    const digits = id.split('').map(d=>+d);
-    const oddSum  = digits[0]+digits[2]+digits[4]+digits[6]+digits[8];
-    const evenSum = digits[1]+digits[3]+digits[5]+digits[7];
-    const d10 = ((7 * oddSum) - evenSum) % 10;
-    const d11 = (digits.slice(0,10).reduce((a,b)=>a+b,0)) % 10;
-    return (d10 === digits[9]) && (d11 === digits[10]);
-  }
-
-  function renderFieldsCustom(obj){
-    const kv = [];
-    function row(k, v){ kv.push(`<div class="kv"><b>${k}</b><span>${v ?? ''}</span></div>`); }
-    fieldsEl.innerHTML = '';
-
-    if(!obj || !obj.rawLines || obj.rawLines.length === 0){
-      fieldsEl.innerHTML = '<div class="hint">MRZ satırları bulunamadı. Daha net hizalayarak tekrar deneyin.</div>';
-      fillEditForm(); // boşalt
-      return;
-    }
-    row('1. Satır', obj.rawLines[0]||'');
-    row('2. Satır', obj.rawLines[1]||'');
-    row('3. Satır', obj.rawLines[2]||'');
-
-    if(obj.tcKimlik){
-      row('T.C. Kimlik No', `${obj.tcKimlik} ` + (obj.tcValid ? `<span class="ok">(geçerli)</span>` : `<span class="bad">(GEÇERSİZ)</span>`));
-    }else{
-      row('T.C. Kimlik No', '<span class="bad">bulunamadı</span>');
-    }
-
-    if(obj.birthISO){
-      row('Doğum Tarihi', obj.birthISO);
-    }else{
-      row('Doğum Tarihi', '<span class="bad">bulunamadı</span>');
-    }
-
-    row('Soyad', obj.soyad || '<span class="bad">—</span>');
-    row('Ad',    obj.ad    || '<span class="bad">—</span>');
-
-    fieldsEl.innerHTML = kv.join('');
-
-    // OCR sonuçlarını düzenleme formuna doldur
-    fillEditForm({
-      tckn: obj.tcKimlik || '',
-      ad: obj.ad || '',
-      soyad: obj.soyad || '',
-      dob: obj.birthISO || ''
-    });
-  }
-
-  function fillEditForm(data){
-    inpTCKN.value = data?.tckn ?? '';
-    inpName.value = data?.ad ?? '';
-    inpSurname.value = data?.soyad ?? '';
-    inpDOB.value = data?.dob ?? '';
-    validateForm();
-  }
-
-  function setFieldError(elErr, msg){
-    if(msg){
-      elErr.textContent = msg;
-      elErr.style.display = 'block';
-    }else{
-      elErr.textContent = '';
-      elErr.style.display = 'none';
-    }
-  }
-
-  function validateDateISO(s){
-    if(!s) return false;
-    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if(!m) return false;
-    const d = new Date(s);
-    if(Number.isNaN(d.getTime())) return false;
-    // ay/gün eşleşmesi (Date leniency'i kapatmak için)
-    const [yy,mm,dd] = [d.getUTCFullYear(), d.getUTCMonth()+1, d.getUTCDate()];
-    return (String(yy).padStart(4,'0') === m[1] && String(mm).padStart(2,'0') === m[2] && String(dd).padStart(2,'0') === m[3]);
-  }
-
-  function validateForm(){
-    const tckn = inpTCKN.value.trim();
-    const dob  = inpDOB.value.trim();
-    let ok = true;
-
-    if(tckn && !validateTCKN(tckn)){
-      setFieldError(errTCKN, 'TCKN geçersiz görünüyor. Yine de kaydetmeden önce düzeltmelisin.');
-      ok = false;
-    }else if(!tckn){
-      setFieldError(errTCKN, 'TCKN boş olamaz.');
-      ok = false;
-    }else{
-      setFieldError(errTCKN, '');
-    }
-
-    if(dob && !validateDateISO(dob)){
-      setFieldError(errDOB, 'Doğum tarihi geçersiz.');
-      ok = false;
-    }else if(!dob){
-      setFieldError(errDOB, 'Doğum tarihi boş olamaz.');
-      ok = false;
-    }else{
-      setFieldError(errDOB, '');
-    }
-
-    validityTag.textContent = 'Geçerlilik: ' + (ok ? 'Uygun' : 'Hatalı Alanlar Var');
-    validityTag.className = 'tag ' + (ok ? 'ok' : 'bad');
-    btnSave.disabled = !ok;
-    return ok;
-  }
-
-  function getFormData(){
-    return {
-      tckn: inpTCKN.value.trim(),
-      ad: inpName.value.trim(),
-      soyad: inpSurname.value.trim(),
-      dob: inpDOB.value.trim(),
-      ts: new Date().toISOString()
-    };
-  }
-
-  // ---- Kayıt yönetimi (localStorage)
-  function loadStore(){
-    try{
-      return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-    }catch(_){
-      return [];
-    }
-  }
-  function saveStore(arr){
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(arr));
-    renderTable();
-  }
-
-  function renderTable(){
-    const data = loadStore();
-    storeInfo.textContent = `Toplam kayıt: ${data.length}`;
-    tblBody.innerHTML = '';
-    if(data.length === 0){
-      tblBody.innerHTML = '<tr><td colspan="7" class="muted">Henüz kayıt yok.</td></tr>';
-      return;
-    }
-    data.forEach((row, idx)=>{
-      const tr = document.createElement('tr');
-      const ok = validateTCKN(row.tckn) && validateDateISO(row.dob);
-      tr.innerHTML = `
-        <td>${idx+1}</td>
-        <td>${row.tckn}</td>
-        <td>${row.ad||''}</td>
-        <td>${row.soyad||''}</td>
-        <td>${row.dob||''}</td>
-        <td>${ ok ? '<span class="ok">Geçerli</span>' : '<span class="bad">Uyarı</span>'}</td>
-        <td>
-          <button data-act="edit" data-i="${idx}">Düzenle</button>
-          <button data-act="del" data-i="${idx}">Sil</button>
-        </td>
-      `;
-      tblBody.appendChild(tr);
-    });
-  }
-
-  tblBody.addEventListener('click', (e)=>{
-    const btn = e.target.closest('button');
-    if(!btn) return;
-    const i = +btn.getAttribute('data-i');
-    const act = btn.getAttribute('data-act');
-    const data = loadStore();
-    if(act === 'del'){
-      if(confirm('Bu kaydı silmek istiyor musunuz?')){
-        data.splice(i,1);
-        saveStore(data);
-      }
-    }else if(act === 'edit'){
-      // seçilen kaydı forma yükle
-      const r = data[i];
-      fillEditForm({ tckn:r.tckn, ad:r.ad, soyad:r.soyad, dob:r.dob });
-      window.scrollTo({ top: document.body.scrollHeight*0.33, behavior:'smooth' });
-    }
-  });
-
-  function toCSV(rows){
-    const headers = ['TCKN','Ad','Soyad','DogumTarihi','KayitZamani'];
-    const esc = (s)=> `"${String(s??'').replace(/"/g,'""')}"`;
-    const lines = [headers.join(',')].concat(
-      rows.map(r=>[esc(r.tckn),esc(r.ad),esc(r.soyad),esc(r.dob),esc(r.ts)].join(','))
-    );
-    return lines.join('\r\n');
-  }
-
-  function download(filename, text){
-    const blob = new Blob([text], {type: 'text/plain;charset=utf-8'});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = filename; document.body.appendChild(a); a.click();
-    setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 0);
-  }
-
-  btnExportCSV.addEventListener('click', ()=>{
-    const data = loadStore();
-    if(data.length===0) return alert('Dışa aktarılacak kayıt yok.');
-    download('mrz_kayitlar.csv', toCSV(data));
-  });
-  btnExportJSON.addEventListener('click', ()=>{
-    const data = loadStore();
-    if(data.length===0) return alert('Dışa aktarılacak kayıt yok.');
-    download('mrz_kayitlar.json', JSON.stringify(data, null, 2));
-  });
-  btnClearAll.addEventListener('click', ()=>{
-    if(confirm('TÜM kayıtlar silinecek. Emin misiniz?')){
-      localStorage.removeItem(STORAGE_KEY);
-      renderTable();
-    }
-  });
-
-  // ---- OCR akışı
-  function takeMrzCropFromVideo(){
-    const vw = video.videoWidth;
-    const vh = video.videoHeight;
-    if(!vw || !vh){ throw new Error('Video hazır değil.'); }
-    const x = Math.round(vw * 0.05);
-    const w = Math.round(vw * 0.90);
-    const h = Math.round(vh * 0.26);
-    const y = Math.round(vh * 0.66);
-    canvas.width = w; canvas.height = h;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(video, x, y, w, h, 0, 0, w, h);
-    return canvas;
-  }
-
-  function takeMrzCropFromImage(){
-    // Yüklenen görselin tamamında OCR yapalım; MRZ satırlarını filtreleyeceğiz
-    const w = imgEl.naturalWidth;
-    const h = imgEl.naturalHeight;
-    if(!w || !h) throw new Error('Görsel yüklenemedi.');
-    const scale = Math.min(1, 1600 / Math.max(w,h)); // hız için gerekirse küçült
-    canvas.width = Math.round(w*scale);
-    canvas.height= Math.round(h*scale);
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(imgEl, 0, 0, canvas.width, canvas.height);
-    return canvas;
-    // Not: İstersen MRZ bölgesini heuristikle alabilirim; şimdilik tamamı üzerinde OCR yapıp '<' içeren satırları seçiyoruz.
-  }
-
-  async function ocrCanvasAndParse(cnv){
-    setStatus('OCR çalışıyor…');
-    const { data } = await Tesseract.recognize(
-      cnv,
-      'eng',
-      {
-        logger: m => { if(m.status) setStatus(`${m.status}… ${Math.round((m.progress||0)*100)}%`); },
-        tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<',
-        preserve_interword_spaces: '1',
-        user_defined_dpi: '300',
-        oem: 1
-      }
-    );
-    const normalized = normalizeMrzText(data.text);
-    rawText.textContent = normalized || '(metin bulunamadı)';
-
-    const lines = pickMrzLines(normalized);
-    if(lines.length === 0){
-      setStatus('MRZ satırı bulunamadı.');
-      renderFieldsCustom({ rawLines: [] });
-      return;
-    }
-    // 3 satıra zorlama (yoksa elde olanla)
-    const block = lines.slice(-3);
-    const parsed = parseCustomFields(block);
-    renderFieldsCustom(parsed);
-    setStatus('Bitti ✅');
-  }
-
-  async function scanFromVideo(){
-    btnSnap.disabled = true;
-    try{
-      const cnv = takeMrzCropFromVideo();
-      await ocrCanvasAndParse(cnv);
-    }catch(err){
-      console.error(err);
-      setStatus('Hata: ' + (err.message || err));
-      renderFieldsCustom({ rawLines: [] });
-    }finally{
-      btnSnap.disabled = !currentStream;
-    }
-  }
-
-  // ---- Resim yükleme & OCR
-  fileInp.addEventListener('change', ()=>{
-    const f = fileInp.files && fileInp.files[0];
-    if(!f){ imgEl.style.display='none'; btnOCR.disabled=true; return; }
-    const url = URL.createObjectURL(f);
-    imgEl.onload = ()=>{ URL.revokeObjectURL(url); btnOCR.disabled=false; video.style.display='none'; imgEl.style.display='block'; setStatus('Görsel yüklendi. "Yüklenen Resmi Tara"ya bas.'); };
-    imgEl.src = url;
-  });
-  btnOCR.addEventListener('click', async ()=>{
-    try{
-      btnOCR.disabled = true;
-      const cnv = takeMrzCropFromImage();
-      await ocrCanvasAndParse(cnv);
-    }catch(err){
-      console.error(err);
-      setStatus('Hata: ' + (err.message || err));
-      renderFieldsCustom({ rawLines: [] });
-    }finally{
-      btnOCR.disabled = false;
-    }
-  });
-
-  // ---- Form olayları
-  [inpTCKN, inpDOB, inpName, inpSurname].forEach(el=>{
-    el.addEventListener('input', validateForm);
-    el.addEventListener('blur', validateForm);
-  });
-
-  btnSave.addEventListener('click', ()=>{
-    if(!validateForm()) return;
-    const data = loadStore();
-    const rec = getFormData();
-    data.push(rec);
-    saveStore(data);
-    alert('Kayıt eklendi.');
-  });
-
-  btnClear.addEventListener('click', ()=>{
-    fillEditForm({ tckn:'', ad:'', soyad:'', dob:'' });
-  });
-
-  // ---- Kamera & genel olaylar
-  btnOpen.addEventListener('click', openCamera);
-  btnStop.addEventListener('click', stopAll);
-  btnSnap.addEventListener('click', scanFromVideo);
-
-  (async function init(){
-    setStatus('Kameralar listeleniyor…');
-    await listCameras();
-    setStatus('Hazır. Kamera ile tara veya bir resim yükle.');
-    renderTable();
-    validateForm();
-  })();
-})();
-</script>
+    <script>
+        // Global değişkenler
+        let stream = null;
+        let video = document.getElementById('video');
+        let canvas = document.getElementById('canvas');
+        let ctx = canvas.getContext('2d');
+        let isScanning = false;
+        let scanInterval = null;
+        let tesseractWorker = null;
+        
+        // Sayfa yüklendiğinde
+        document.addEventListener('DOMContentLoaded', function() {
+            updateStatus('Hazır - Kamera başlatılabilir', 'ready');
+        });
+        
+        // Kamera başlatma
+        async function startCamera() {
+            updateStatus('Kamera başlatılıyor...', 'loading');
+            
+            try {
+                // Modern tarayıcılarda kamera erişimi
+                const constraints = {
+                    video: {
+                        facingMode: 'environment', // Arka kamera (mobil)
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    },
+                    audio: false
+                };
+                
+                stream = await navigator.mediaDevices.getUserMedia(constraints);
+                video.srcObject = stream;
+                
+                video.onloadedmetadata = () => {
+                    video.play();
+                    document.getElementById('videoContainer').style.display = 'block';
+                    document.getElementById('startCameraBtn').style.display = 'none';
+                    document.getElementById('scanBtn').style.display = 'inline-block';
+                    document.getElementById('captureBtn').style.display = 'inline-block';
+                    document.getElementById('stopBtn').style.display = 'inline-block';
+                    
+                    updateStatus('Kamera hazır - Kimliği yeşil çerçeveye hizalayın', 'active');
+                    hideError();
+                };
+                
+            } catch (err) {
+                console.error('Kamera hatası:', err);
+                let errorMessage = 'Kamera açılamadı: ';
+                
+                if (err.name === 'NotAllowedError') {
+                    errorMessage = 'Kamera izni reddedildi. Lütfen izin verin ve sayfayı yenileyin.';
+                } else if (err.name === 'NotFoundError') {
+                    errorMessage = 'Kamera bulunamadı. Cihazınızda kamera olduğundan emin olun.';
+                } else if (err.name === 'NotReadableError') {
+                    errorMessage = 'Kamera başka bir uygulama tarafından kullanılıyor.';
+                } else {
+                    errorMessage += err.message;
+                }
+                
+                showError(errorMessage);
+                updateStatus('Kamera hatası', 'error');
+            }
+        }
+        
+        // Kamera durdurma
+        function stopCamera() {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null;
+            }
+            
+            video.srcObject = null;
+            
+            // Taramayı durdur
+            if (isScanning) {
+                toggleScanning();
+            }
+            
+            // UI güncelle
+            document.getElementById('videoContainer').style.display = 'none';
+            document.getElementById('startCameraBtn').style.display = 'inline-block';
+            document.getElementById('scanBtn').style.display = 'none';
+            document.getElementById('captureBtn').style.display = 'none';
+            document.getElementById('stopBtn').style.display = 'none';
+            
+            updateStatus('Kamera durduruldu', 'ready');
+        }
+        
+        // Anlık tarama başlat/durdur
+        async function toggleScanning() {
+            if (!isScanning) {
+                isScanning = true;
+                document.getElementById('scanBtn').textContent = '⏸️ Taramayı Durdur';
+                updateStatus('Anlık tarama aktif - MRZ aranıyor...', 'scanning');
+                
+                // Tesseract worker'ı başlat
+                if (!tesseractWorker) {
+                    tesseractWorker = await initTesseract();
+                }
+                
+                // Her 2 saniyede bir tara
+                scanInterval = setInterval(scanForMRZ, 2000);
+                
+            } else {
+                isScanning = false;
+                document.getElementById('scanBtn').textContent = '🔍 Taramaya Başla';
+                updateStatus('Tarama durduruldu', 'active');
+                
+                if (scanInterval) {
+                    clearInterval(scanInterval);
+                    scanInterval = null;
+                }
+            }
+        }
+        
+        // Tesseract başlatma
+        async function initTesseract() {
+            try {
+                const worker = await Tesseract.createWorker({
+                    logger: m => console.log(m)
+                });
+                
+                await worker.loadLanguage('eng');
+                await worker.initialize('eng');
+                await worker.setParameters({
+                    tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<>',
+                    tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK,
+                });
+                
+                return worker;
+            } catch (err) {
+                console.error('Tesseract başlatma hatası:', err);
+                return null;
+            }
+        }
+        
+        // MRZ tarama
+        async function scanForMRZ() {
+            if (!isScanning || !video || !tesseractWorker) return;
+            
+            try {
+                // Video'dan frame yakala
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                ctx.drawImage(video, 0, 0);
+                
+                // MRZ bölgesini kırp (alt %25'lik kısım)
+                const cropHeight = canvas.height * 0.25;
+                const cropY = canvas.height - cropHeight;
+                
+                const imageData = ctx.getImageData(0, cropY, canvas.width, cropHeight);
+                const croppedCanvas = document.createElement('canvas');
+                croppedCanvas.width = canvas.width;
+                croppedCanvas.height = cropHeight;
+                const croppedCtx = croppedCanvas.getContext('2d');
+                croppedCtx.putImageData(imageData, 0, 0);
+                
+                // OCR ile tara
+                const result = await tesseractWorker.recognize(croppedCanvas);
+                const text = result.data.text;
+                
+                // MRZ kontrolü
+                const mrzData = findMRZInText(text);
+                if (mrzData && mrzData.lines.length >= 3) {
+                    const parsedData = parseMRZ(mrzData.lines);
+                    if (parsedData && parsedData.tcNo && parsedData.tcNo.length === 11) {
+                        // Başarılı okuma!
+                        isScanning = false;
+                        clearInterval(scanInterval);
+                        updateStatus('MRZ başarıyla okundu!', 'success');
+                        displayResults(parsedData);
+                        return;
+                    }
+                }
+                
+            } catch (err) {
+                console.error('Tarama hatası:', err);
+            }
+        }
+        
+        // Manuel fotoğraf çekme
+        function captureImage() {
+            if (!video) return;
+            
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            ctx.drawImage(video, 0, 0);
+            
+            const imageData = canvas.toDataURL('image/jpeg', 0.95);
+            processFullImage(imageData);
+        }
+        
+        // Manuel işlem
+        async function processFullImage(imageData) {
+            updateStatus('Fotoğraf işleniyor...', 'loading');
+            
+            try {
+                if (!tesseractWorker) {
+                    tesseractWorker = await initTesseract();
+                }
+                
+                const result = await tesseractWorker.recognize(imageData);
+                const fullText = result.data.text;
+                
+                const mrzData = findMRZInText(fullText);
+                
+                if (mrzData && mrzData.lines.length >= 3) {
+                    const parsedData = parseMRZ(mrzData.lines);
+                    
+                    if (parsedData && parsedData.tcNo) {
+                        displayResults(parsedData);
+                        updateStatus('İşlem tamamlandı', 'success');
+                    } else {
+                        throw new Error('MRZ kodu okunamadı. Lütfen daha net bir fotoğraf deneyin.');
+                    }
+                } else {
+                    throw new Error('MRZ kodu bulunamadı. Kimliğin arka yüzünü kullandığınızdan emin olun.');
+                }
+                
+            } catch (err) {
+                console.error('İşlem hatası:', err);
+                showError(err.message || 'Okuma sırasında bir hata oluştu.');
+                updateStatus('İşlem hatası', 'error');
+            }
+        }
+        
+        // MRZ bulma fonksiyonu
+        function findMRZInText(text) {
+            const lines = text.split('\n');
+            const mrzLines = [];
+            
+            const mrzPattern = /[A-Z0-9<]{20,}/;
+            
+            for (let i = 0; i < lines.length; i++) {
+                const cleanLine = lines[i]
+                    .toUpperCase()
+                    .replace(/\s/g, '')
+                    .replace(/[^A-Z0-9<]/g, '');
+                
+                if (cleanLine.length >= 20 && cleanLine.includes('<') && mrzPattern.test(cleanLine)) {
+                    const processedLine = cleanMRZLine(cleanLine);
+                    mrzLines.push(processedLine);
+                    
+                    if (mrzLines.length >= 3) break;
+                }
+            }
+            
+            return mrzLines.length >= 3 ? { lines: mrzLines.slice(0, 3) } : null;
+        }
+        
+        // MRZ satırı temizleme
+        function cleanMRZLine(line) {
+            let cleaned = line
+                .replace(/0/g, 'O')
+                .replace(/1/g, 'I')
+                .replace(/5/g, 'S')
+                .replace(/8/g, 'B')
+                .replace(/\s/g, '')
+                .replace(/[^A-Z0-9<]/g, '');
+            
+            if (cleaned.length > 11) {
+                const tcPart = cleaned.substring(0, 11)
+                    .replace(/O/g, '0')
+                    .replace(/I/g, '1')
+                    .replace(/S/g, '5')
+                    .replace(/B/g, '8');
+                cleaned = tcPart + cleaned.substring(11);
+            }
+            
+            return cleaned.padEnd(30, '<').substring(0, 30);
+        }
+        
+        // MRZ parse etme
+        function parseMRZ(mrzLines) {
+            try {
+                if (mrzLines.length < 3) return null;
+                
+                const line2 = mrzLines[1];
+                const line3 = mrzLines[2];
+                
+                const tcNo = line2.substring(0, 11).replace(/[^0-9]/g, '');
+                const birthDateRaw = line2.substring(13, 19).replace(/[^0-9]/g, '');
+                const genderChar = line2.charAt(20);
+                const expiryDateRaw = line2.substring(21, 27).replace(/[^0-9]/g, '');
+                
+                const gender = genderChar === 'E' || genderChar === 'M' ? 'Erkek' : 
+                             genderChar === 'K' || genderChar === 'F' ? 'Kadın' : '-';
+                
+                const nameParts = line3.split('<<');
+                let lastName = '';
+                let firstName = '';
+                
+                if (nameParts.length >= 2) {
+                    lastName = nameParts[0].replace(/</g, ' ').trim();
+                    firstName = nameParts[1].replace(/</g, ' ').trim();
+                }
+                
+                return {
+                    tcNo: tcNo,
+                    firstName: firstName || '-',
+                    lastName: lastName || '-',
+                    birthDate: formatDate(birthDateRaw),
+                    gender: gender,
+                    expiryDate: formatDate(expiryDateRaw),
+                    mrzLines: mrzLines
+                };
+                
+            } catch (err) {
+                console.error('Parse hatası:', err);
+                return null;
+            }
+        }
+        
+        // Tarih formatlama
+        function formatDate(dateStr) {
+            if (!dateStr || dateStr.length !== 6) return '-';
+            
+            const year = parseInt(dateStr.substring(0, 2));
+            const month = dateStr.substring(2, 4);
+            const day = dateStr.substring(4, 6);
+            
+            const fullYear = year > 30 ? 1900 + year : 2000 + year;
+            
+            return `${day}.${month}.${fullYear}`;
+        }
+        
+        // UI Fonksiyonları
+        function updateStatus(text, status) {
+            document.getElementById('statusText').textContent = text;
+            const indicator = document.getElementById('statusIndicator');
+            
+            indicator.className = 'status-indicator';
+            if (status === 'active') indicator.classList.add('active');
+            if (status === 'scanning') indicator.classList.add('scanning');
+        }
+        
+        function showError(message) {
+            const errorEl = document.getElementById('error');
+            errorEl.textContent = message;
+            errorEl.classList.add('active');
+        }
+        
+        function hideError() {
+            document.getElementById('error').classList.remove('active');
+        }
+        
+        function displayResults(data) {
+            document.getElementById('tcNo').textContent = data.tcNo || '-';
+            document.getElementById('firstName').textContent = data.firstName || '-';
+            document.getElementById('lastName').textContent = data.lastName || '-';
+            document.getElementById('birthDate').textContent = data.birthDate || '-';
+            document.getElementById('gender').textContent = data.gender || '-';
+            document.getElementById('expiryDate').textContent = data.expiryDate || '-';
+            
+            if (data.mrzLines) {
+                const mrzHtml = data.mrzLines.map(line => 
+                    `<div class="mrz-line">${line}</div>`
+                ).join('');
+                document.getElementById('mrzText').innerHTML = mrzHtml;
+            }
+            
+            document.getElementById('results').classList.add('active');
+            
+            // Taramayı durdur
+            if (isScanning) {
+                toggleScanning();
+            }
+        }
+        
+        function hideResults() {
+            document.getElementById('results').classList.remove('active');
+        }
+        
+        function resetApp() {
+            hideResults();
+            hideError();
+            updateStatus('Kamera hazır - Kimliği yeşil çerçeveye hizalayın', 'active');
+            
+            if (isScanning) {
+                toggleScanning();
+            }
+        }
+        
+        // Sayfa kapatılırken kaynakları temizle
+        window.addEventListener('beforeunload', () => {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+            }
+            if (tesseractWorker) {
+                tesseractWorker.terminate();
+            }
+        });
+    </script>
 </body>
 </html>
