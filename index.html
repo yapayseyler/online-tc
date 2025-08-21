@@ -1156,7 +1156,7 @@
             return cleaned;
         }
         
-        // MRZ parse etme - Gerçek örneklere göre optimize edilmiş
+        // MRZ parse etme - Doğru pozisyonlara göre düzeltilmiş
         function parseMRZ(mrzLines) {
             try {
                 if (mrzLines.length < 3) return null;
@@ -1166,53 +1166,52 @@
                 console.log('Satır 2:', mrzLines[1]);
                 console.log('Satır 3:', mrzLines[2]);
                 
-                const line1 = mrzLines[0]; // I<TUR...
-                const line2 = mrzLines[1]; // TC No + Doğum + Cinsiyet + Son geçerlilik
+                const line1 = mrzLines[0]; // I<TUR... ve sondaki 11 rakam TC No
+                const line2 = mrzLines[1]; // İlk 6 rakam doğum tarihi + diğer bilgiler
                 const line3 = mrzLines[2]; // SOYAD<<AD formatında
                 
-                // SATIR 2 ANALİZİ
-                // TC Kimlik No: İlk 11 rakam (pozisyon 0-10)
+                // SATIR 1 ANALİZİ - TC Kimlik No
+                // Satır 1'in sonundaki 11 rakamı al (sağdan sola)
                 let tcNo = '';
-                for (let i = 0; i < line2.length && tcNo.length < 11; i++) {
-                    const char = line2.charAt(i);
+                let digitCount = 0;
+                
+                // Satır sonundan başlayarak rakamları topla
+                for (let i = line1.length - 1; i >= 0 && digitCount < 11; i--) {
+                    const char = line1.charAt(i);
                     if (/[0-9]/.test(char)) {
-                        tcNo += char;
-                    } else if (/[O]/.test(char)) {
-                        tcNo += '0'; // O harfini 0'a çevir
-                    } else if (/[I]/.test(char)) {
-                        tcNo += '1'; // I harfini 1'e çevir
+                        tcNo = char + tcNo; // Başa ekle
+                        digitCount++;
+                    } else if (char === 'O') {
+                        tcNo = '0' + tcNo;
+                        digitCount++;
+                    } else if (char === 'I') {
+                        tcNo = '1' + tcNo;
+                        digitCount++;
                     }
                 }
                 
-                console.log('🆔 TC No çıkarıldı:', tcNo);
+                console.log('🆔 TC No (satır 1 sonu):', tcNo);
                 
-                // Doğum tarihi: TC No'dan sonraki 6 rakam (YYMMDD formatında)
+                // SATIR 2 ANALİZİ - Doğum tarihi
+                // Satır 2'nin başındaki 6 rakamı al (soldan sağa)
                 let birthDateRaw = '';
-                let digitCount = 0;
-                let startFound = false;
                 
                 for (let i = 0; i < line2.length && birthDateRaw.length < 6; i++) {
                     const char = line2.charAt(i);
-                    
-                    if (/[0-9O]/.test(char)) {
-                        digitCount++;
-                        
-                        // İlk 11 rakamı geçtikten sonra doğum tarihini topla
-                        if (digitCount > 11) {
-                            startFound = true;
-                        }
-                        
-                        if (startFound) {
-                            birthDateRaw += char === 'O' ? '0' : char;
-                        }
+                    if (/[0-9]/.test(char)) {
+                        birthDateRaw += char;
+                    } else if (char === 'O') {
+                        birthDateRaw += '0';
+                    } else if (char === 'I') {
+                        birthDateRaw += '1';
                     }
                 }
                 
-                console.log('📅 Doğum tarihi raw:', birthDateRaw);
+                console.log('📅 Doğum tarihi (satır 2 başı):', birthDateRaw);
                 
                 // Cinsiyet: Line2'de M, F, E, K harflerini ara
                 let gender = '-';
-                for (let i = 0; i < line2.length; i++) {
+                for (let i = 6; i < line2.length; i++) { // Doğum tarihinden sonra ara
                     const char = line2.charAt(i);
                     if (char === 'M' || char === 'E') {
                         gender = 'Erkek';
@@ -1225,30 +1224,36 @@
                 
                 console.log('👤 Cinsiyet:', gender);
                 
-                // Son geçerlilik tarihi: Doğum tarihinden sonraki 6 rakam
+                // Son geçerlilik tarihi: Doğum tarihinden sonra bir sonraki 6 rakam dizisi
                 let expiryDateRaw = '';
-                let afterBirth = false;
-                let birthFound = false;
-                digitCount = 0;
+                let foundBirthDate = false;
+                let digitsSinceBirth = 0;
                 
                 for (let i = 0; i < line2.length; i++) {
                     const char = line2.charAt(i);
                     
                     if (/[0-9O]/.test(char)) {
-                        digitCount++;
-                        
-                        // TC No (11) + Doğum (6) = 17 rakamdan sonra son geçerlilik
-                        if (digitCount > 17 && expiryDateRaw.length < 6) {
-                            expiryDateRaw += char === 'O' ? '0' : char;
+                        if (!foundBirthDate) {
+                            digitsSinceBirth++;
+                            if (digitsSinceBirth >= 6) {
+                                foundBirthDate = true;
+                                digitsSinceBirth = 0;
+                            }
+                        } else {
+                            // Doğum tarihinden sonraki rakamları topla
+                            digitsSinceBirth++;
+                            if (digitsSinceBirth > 0 && digitsSinceBirth <= 6) {
+                                expiryDateRaw += char === 'O' ? '0' : char;
+                            }
+                            if (digitsSinceBirth >= 6) break;
                         }
                     }
                 }
                 
-                console.log('⏰ Son geçerlilik raw:', expiryDateRaw);
+                console.log('⏰ Son geçerlilik tarihi:', expiryDateRaw);
                 
                 // SATIR 3 ANALİZİ - İsim parsing
                 // Format: SOYAD<<AD<<<< şeklinde
-                const nameLine = line3.replace(/</g, ' ').trim();
                 const nameParts = line3.split('<<');
                 
                 let lastName = '';
@@ -1262,6 +1267,7 @@
                     firstName = nameParts[1].replace(/</g, ' ').trim();
                 } else {
                     // Alternatif parsing: Boşluklarla ayır
+                    const nameLine = line3.replace(/</g, ' ').trim();
                     const names = nameLine.split(/\s+/);
                     if (names.length >= 2) {
                         lastName = names[0];
