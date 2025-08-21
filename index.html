@@ -452,7 +452,7 @@
             updateStatus('Hazır - Kamera başlatılabilir', 'ready');
         });
         
-        // Kamera başlatma - Agresif Ana Kamera Seçimi
+        // Kamera başlatma
         async function startCamera() {
             updateStatus('Kamera başlatılıyor...', 'loading');
             
@@ -606,61 +606,6 @@
                     errorMessage += '• Adres çubuğundaki kamera simgesine tıklayın\n';
                     errorMessage += '• "İzin Ver" seçeneğini seçin\n';
                     errorMessage += '• Sayfayı yenileyin (F5)';
-                } else if (err.name === 'NotFoundError') {
-                    errorMessage = 'Kamera bulunamadı. Cihazınızda kamera olduğundan emin olun.';
-                } else if (err.name === 'NotReadableError') {
-                    errorMessage = 'Kamera başka bir uygulama tarafından kullanılıyor.';
-                } else {
-                    errorMessage += err.message;
-                }
-                
-                showError(errorMessage);
-                updateStatus('Kamera hatası', 'error');
-            }
-        }
-                
-            } catch (err) {
-                console.error('❌ KAMERA HATASI:', err);
-                
-                let errorMessage = 'Kamera açılamadı: ';
-                
-                if (err.name === 'NotAllowedError') {
-                    errorMessage = 'Kamera izni reddedildi. Lütfen izin verin:\n';
-                    errorMessage += '• Adres çubuğundaki kamera simgesine tıklayın\n';
-                    errorMessage += '• "İzin Ver" seçeneğini seçin\n';
-                    errorMessage += '• Sayfayı yenileyin (F5)';
-                } else if (err.name === 'NotFoundError') {
-                    errorMessage = 'Kamera bulunamadı. Cihazınızda kamera olduğundan emin olun.';
-                } else if (err.name === 'NotReadableError') {
-                    errorMessage = 'Kamera başka bir uygulama tarafından kullanılıyor.';
-                } else {
-                    errorMessage += err.message;
-                }
-                
-                showError(errorMessage);
-                updateStatus('Kamera hatası', 'error');
-            }
-        }
-                video.srcObject = stream;
-                
-                video.onloadedmetadata = () => {
-                    video.play();
-                    document.getElementById('videoContainer').style.display = 'block';
-                    document.getElementById('startCameraBtn').style.display = 'none';
-                    document.getElementById('scanBtn').style.display = 'inline-block';
-                    document.getElementById('captureBtn').style.display = 'inline-block';
-                    document.getElementById('stopBtn').style.display = 'inline-block';
-                    
-                    updateStatus('Kamera hazır - Kimliği yeşil çerçeveye hizalayın', 'active');
-                    hideError();
-                };
-                
-            } catch (err) {
-                console.error('Kamera hatası:', err);
-                let errorMessage = 'Kamera açılamadı: ';
-                
-                if (err.name === 'NotAllowedError') {
-                    errorMessage = 'Kamera izni reddedildi. Lütfen izin verin ve sayfayı yenileyin.';
                 } else if (err.name === 'NotFoundError') {
                     errorMessage = 'Kamera bulunamadı. Cihazınızda kamera olduğundan emin olun.';
                 } else if (err.name === 'NotReadableError') {
@@ -839,6 +784,24 @@
             return null;
         }
         
+        // Görüntü iyileştirme fonksiyonu
+        function enhanceImageForOCR(imageData) {
+            const data = imageData.data;
+            
+            for (let i = 0; i < data.length; i += 4) {
+                // Grayscale'e çevir
+                const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+                
+                // Kontrast artır ve threshold uygula
+                const enhanced = gray > 128 ? 255 : 0;
+                
+                data[i] = enhanced;     // R
+                data[i + 1] = enhanced; // G
+                data[i + 2] = enhanced; // B
+                // Alpha (i + 3) değişmez
+            }
+        }
+        
         // Gelişmiş görüntü iyileştirme
         function enhanceImageAdvanced(imageData) {
             const data = imageData.data;
@@ -862,40 +825,6 @@
                 data[i + 1] = enhanced;
                 data[i + 2] = enhanced;
             }
-        }
-        
-        // Tam görüntü MRZ bulma (Orijinal methodunuzdan esinlenen)
-        function findMRZInTextComplete(text) {
-            const lines = text.split('\n');
-            const potentialMRZLines = [];
-            
-            console.log('TÜM SATIRLAR:', lines);
-            
-            for (let line of lines) {
-                let cleanLine = line
-                    .toUpperCase()
-                    .replace(/\s/g, '')
-                    .replace(/[^A-Z0-9<]/g, '');
-                
-                // Daha esnek MRZ detection
-                if (cleanLine.length >= 12) {
-                    const hasNumbers = (cleanLine.match(/[0-9]/g) || []).length >= 3;
-                    const hasLetters = (cleanLine.match(/[A-Z]/g) || []).length >= 3;
-                    const hasAngleBrackets = cleanLine.includes('<');
-                    
-                    // MRZ pattern indicators
-                    if ((hasNumbers && hasLetters) || hasAngleBrackets || cleanLine.length >= 25) {
-                        console.log('Potansiyel MRZ (FULL):', cleanLine);
-                        potentialMRZLines.push(cleanMRZLineAdvanced(cleanLine));
-                    }
-                }
-            }
-            
-            if (potentialMRZLines.length >= 3) {
-                return { lines: potentialMRZLines.slice(0, 3) };
-            }
-            
-            return null;
         }
         
         // Manuel fotoğraf çekme
@@ -923,7 +852,7 @@
                 const fullText = result.data.text;
                 
                 // Manuel işlem için gelişmiş MRZ bulma
-                const mrzData = findMRZInTextAdvanced(fullText);
+                const mrzData = findMRZInTextComplete(fullText);
                 
                 if (mrzData && mrzData.lines.length >= 3) {
                     const parsedData = parseMRZ(mrzData.lines);
@@ -986,6 +915,40 @@
             return null;
         }
         
+        // Tam görüntü MRZ bulma (Orijinal methodunuzdan esinlenen)
+        function findMRZInTextComplete(text) {
+            const lines = text.split('\n');
+            const potentialMRZLines = [];
+            
+            console.log('TÜM SATIRLAR:', lines);
+            
+            for (let line of lines) {
+                let cleanLine = line
+                    .toUpperCase()
+                    .replace(/\s/g, '')
+                    .replace(/[^A-Z0-9<]/g, '');
+                
+                // Daha esnek MRZ detection
+                if (cleanLine.length >= 12) {
+                    const hasNumbers = (cleanLine.match(/[0-9]/g) || []).length >= 3;
+                    const hasLetters = (cleanLine.match(/[A-Z]/g) || []).length >= 3;
+                    const hasAngleBrackets = cleanLine.includes('<');
+                    
+                    // MRZ pattern indicators
+                    if ((hasNumbers && hasLetters) || hasAngleBrackets || cleanLine.length >= 25) {
+                        console.log('Potansiyel MRZ (FULL):', cleanLine);
+                        potentialMRZLines.push(cleanMRZLineAdvanced(cleanLine));
+                    }
+                }
+            }
+            
+            if (potentialMRZLines.length >= 3) {
+                return { lines: potentialMRZLines.slice(0, 3) };
+            }
+            
+            return null;
+        }
+        
         // Gelişmiş MRZ satırı temizleme
         function cleanMRZLineAdvanced(line) {
             // Önce yaygın OCR hatalarını düzelt
@@ -1017,28 +980,6 @@
             }
             
             return cleaned;
-        }
-        
-        // MRZ satırı temizleme
-        function cleanMRZLine(line) {
-            let cleaned = line
-                .replace(/0/g, 'O')
-                .replace(/1/g, 'I')
-                .replace(/5/g, 'S')
-                .replace(/8/g, 'B')
-                .replace(/\s/g, '')
-                .replace(/[^A-Z0-9<]/g, '');
-            
-            if (cleaned.length > 11) {
-                const tcPart = cleaned.substring(0, 11)
-                    .replace(/O/g, '0')
-                    .replace(/I/g, '1')
-                    .replace(/S/g, '5')
-                    .replace(/B/g, '8');
-                cleaned = tcPart + cleaned.substring(11);
-            }
-            
-            return cleaned.padEnd(30, '<').substring(0, 30);
         }
         
         // MRZ parse etme
