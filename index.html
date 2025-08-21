@@ -49,6 +49,30 @@
             padding: 30px;
         }
         
+        /* Kamera Seçimi */
+        .camera-selector {
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 10px;
+        }
+        
+        .camera-selector label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .camera-selector select {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 14px;
+            background: white;
+        }
+        
         /* Kamera Alanı */
         .camera-section {
             margin-bottom: 30px;
@@ -150,6 +174,19 @@
         .btn-danger {
             background: #f56565;
             color: white;
+        }
+        
+        .btn-send {
+            background: #10b981;
+            color: white;
+            font-size: 18px;
+            padding: 15px 40px;
+        }
+        
+        .btn-send:hover:not(:disabled) {
+            background: #059669;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(16, 185, 129, 0.3);
         }
         
         .btn:disabled {
@@ -259,6 +296,27 @@
             margin: 2px 0;
         }
         
+        .send-section {
+            margin-top: 20px;
+            padding: 20px;
+            background: linear-gradient(45deg, #f0fff4, #ecfdf5);
+            border-radius: 12px;
+            text-align: center;
+            border: 2px solid #d1fae5;
+        }
+        
+        .send-section h3 {
+            color: #065f46;
+            margin-bottom: 15px;
+            font-size: 20px;
+        }
+        
+        .send-section p {
+            color: #047857;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+        
         /* Hata */
         .error {
             display: none;
@@ -339,6 +397,14 @@
         </div>
         
         <div class="content">
+            <!-- Kamera Seçimi -->
+            <div class="camera-selector">
+                <label for="cameraSelect">Kamera Seçin:</label>
+                <select id="cameraSelect">
+                    <option>— Kameralar yükleniyor —</option>
+                </select>
+            </div>
+            
             <!-- Durum Çubuğu -->
             <div class="status-bar">
                 <div class="status-indicator" id="statusIndicator"></div>
@@ -416,6 +482,15 @@
                 
                 <div class="mrz-text" id="mrzText"></div>
                 
+                <!-- Gönder Bölümü -->
+                <div class="send-section">
+                    <h3>📤 Display Koduna Gönder</h3>
+                    <p>Okunan kimlik bilgilerini display koduna göndermek için butona tıklayın.</p>
+                    <button class="btn btn-send" onclick="sendToDisplay()">
+                        🚀 Display Koduna Gönder
+                    </button>
+                </div>
+                
                 <div style="text-align: center; margin-top: 20px;">
                     <button class="btn btn-primary" onclick="resetApp()">
                         🔄 Yeni Tarama Yap
@@ -427,6 +502,7 @@
             <div class="tips">
                 <div class="tips-title">💡 En İyi Sonuç İçin:</div>
                 <ul>
+                    <li><strong>Ana kamerayı seçin</strong> - Balık gözü değil normal kamera</li>
                     <li><strong>Kimliğin arka yüzünü</strong> yeşil çerçeveye hizalayın</li>
                     <li>MRZ kodu (alt kısımdaki 3 satır) <strong>net görünsün</strong></li>
                     <li><strong>İyi ışıkta</strong>, gölgesiz fotoğraf çekin</li>
@@ -446,64 +522,105 @@
         let isScanning = false;
         let scanInterval = null;
         let tesseractWorker = null;
+        let devices = [];
+        let deviceIndex = 0;
+        let currentData = null; // Okunan veriyi sakla
+        
+        // Kamera seçimi için gelişmiş algoritma
+        function scoreDevice(d) {
+            const L = (d.label || '').toLowerCase();
+            let s = 0;
+            
+            // Ana kamera skorları
+            if (/back|rear|environment|main|standard|regular/.test(L)) s += 8;
+            if (/camera\s*0\b/.test(L)) s += 2;
+            
+            // Ön kamera penaltı
+            if (/front|user|selfie/.test(L)) s -= 6;
+            
+            // Özel kamera tipleri penaltı (balık gözü vs.)
+            if (/ultra[-\s]?wide|\buw\b|super[-\s]?wide|fisheye|macro|depth|bokeh|wide\s*angle/.test(L)) s -= 8;
+            
+            return s;
+        }
+        
+        function preferBack(list) {
+            return list.slice().sort((a, b) => scoreDevice(b) - scoreDevice(a));
+        }
         
         // Sayfa yüklendiğinde
         document.addEventListener('DOMContentLoaded', function() {
-            updateStatus('Hazır - Kamera başlatılabilir', 'ready');
+            initApp();
         });
+        
+        async function initApp() {
+            updateStatus('Kameralar yükleniyor...', 'loading');
+            await listCameras();
+            updateStatus('Hazır - Kamera seçin ve başlatın', 'ready');
+        }
+        
+        // Kameraları listele
+        async function listCameras() {
+            try {
+                // İzin almak için geçici stream oluştur
+                const tmp = await navigator.mediaDevices.getUserMedia({video: true, audio: false});
+                tmp.getTracks().forEach(t => t.stop());
+            } catch(_) {}
+            
+            let all = await navigator.mediaDevices.enumerateDevices();
+            all = all.filter(d => d.kind === 'videoinput');
+            devices = preferBack(all);
+            
+            const cameraSelect = document.getElementById('cameraSelect');
+            cameraSelect.innerHTML = '';
+            
+            devices.forEach((d, i) => {
+                const option = document.createElement('option');
+                option.value = i;
+                option.textContent = d.label || `Kamera ${i + 1}`;
+                cameraSelect.appendChild(option);
+            });
+            
+            deviceIndex = 0;
+            cameraSelect.value = String(deviceIndex);
+            
+            // Kamera seçimi değiştiğinde
+            cameraSelect.addEventListener('change', async (e) => {
+                deviceIndex = +e.target.value || 0;
+                if (devices[deviceIndex] && stream) {
+                    await startCamera(); // Yeni kamerayla başlat
+                }
+            });
+        }
         
         // Kamera başlatma
         async function startCamera() {
-            updateStatus('Kamera başlatılıyor...', 'loading');
+            updateStatus('Kamera açılıyor...', 'loading');
             
             try {
-                // Önce mevcut kameraları listele
-                const devices = await navigator.mediaDevices.enumerateDevices();
-                const videoDevices = devices.filter(device => device.kind === 'videoinput');
-                console.log('Bulunan kameralar:', videoDevices);
-                
-                let constraints;
-                
-                // Ana kamerayı bulmaya çalış
-                const backCamera = videoDevices.find(device => 
-                    device.label.toLowerCase().includes('back') ||
-                    device.label.toLowerCase().includes('rear') ||
-                    device.label.toLowerCase().includes('ana') ||
-                    device.label.toLowerCase().includes('main')
-                );
-                
-                if (backCamera) {
-                    console.log('Ana kamera bulundu:', backCamera.label);
-                    constraints = {
-                        video: {
-                            deviceId: { exact: backCamera.deviceId },
-                            width: { ideal: 1920, max: 1920 },
-                            height: { ideal: 1080, max: 1080 }
-                        },
-                        audio: false
-                    };
-                } else if (videoDevices.length > 1) {
-                    // İkinci kamerayı dene (genelde ana kamera)
-                    console.log('İkinci kamera deneniyor:', videoDevices[1].label);
-                    constraints = {
-                        video: {
-                            deviceId: { exact: videoDevices[1].deviceId },
-                            width: { ideal: 1920, max: 1920 },
-                            height: { ideal: 1080, max: 1080 }
-                        },
-                        audio: false
-                    };
-                } else {
-                    // Fallback
-                    constraints = {
-                        video: {
-                            facingMode: 'environment',
-                            width: { ideal: 1920, max: 1920 },
-                            height: { ideal: 1080, max: 1080 }
-                        },
-                        audio: false
-                    };
+                // Mevcut stream'i durdur
+                if (stream) {
+                    stream.getTracks().forEach(track => track.stop());
+                    stream = null;
                 }
+                
+                const dev = devices[deviceIndex];
+                if (!dev) {
+                    throw new Error('Kamera bulunamadı.');
+                }
+                
+                // Yüksek çözünürlük constraint'leri
+                const constraints = {
+                    video: {
+                        deviceId: { exact: dev.deviceId },
+                        facingMode: 'environment',
+                        width: { ideal: 1920, max: 1920 },
+                        height: { ideal: 1080, max: 1080 },
+                        frameRate: { ideal: 30 },
+                        advanced: [{ focusMode: 'continuous' }]
+                    },
+                    audio: false
+                };
                 
                 stream = await navigator.mediaDevices.getUserMedia(constraints);
                 video.srcObject = stream;
@@ -516,7 +633,7 @@
                     document.getElementById('captureBtn').style.display = 'inline-block';
                     document.getElementById('stopBtn').style.display = 'inline-block';
                     
-                    updateStatus('Kamera hazır - Kimliği yeşil çerçeveye hizalayın', 'active');
+                    updateStatus(`Kamera açık: ${dev.label || 'Seçili cihaz'}. MRZ penceresine hizala ve tara.`, 'active');
                     hideError();
                 };
                 
@@ -575,7 +692,7 @@
                     tesseractWorker = await initTesseract();
                 }
                 
-                // Her 1 saniyede bir tara (daha hızlı)
+                // Her 1 saniyede bir tara
                 scanInterval = setInterval(scanForMRZ, 1000);
                 
             } else {
@@ -596,8 +713,7 @@
                 updateStatus('OCR motoru başlatılıyor...', 'loading');
                 
                 const worker = await Tesseract.createWorker({
-                    logger: m => console.log(m),
-                    corePath: 'https://unpkg.com/tesseract.js-core@4.0.2/tesseract-core.wasm.js'
+                    logger: m => console.log(m)
                 });
                 
                 await worker.loadLanguage('eng');
@@ -606,9 +722,9 @@
                 // MRZ için optimize edilmiş ayarlar
                 await worker.setParameters({
                     tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<',
-                    tessedit_pageseg_mode: '6', // Uniform text block
+                    tessedit_pageseg_mode: '6',
                     preserve_interword_spaces: '0',
-                    user_defined_dpi: '200'
+                    user_defined_dpi: '300'
                 });
                 
                 updateStatus('OCR hazır - Tarama başlatılabilir', 'active');
@@ -698,53 +814,6 @@
             }
         }
         
-        // Manuel fotoğraf çekme
-        function captureImage() {
-            if (!video) return;
-            
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            ctx.drawImage(video, 0, 0);
-            
-            const imageData = canvas.toDataURL('image/jpeg', 0.95);
-            processFullImage(imageData);
-        }
-        
-        // Manuel işlem
-        async function processFullImage(imageData) {
-            updateStatus('Fotoğraf işleniyor...', 'loading');
-            
-            try {
-                if (!tesseractWorker) {
-                    tesseractWorker = await initTesseract();
-                }
-                
-                const result = await tesseractWorker.recognize(imageData);
-                const fullText = result.data.text;
-                
-                // Manuel işlem için gelişmiş MRZ bulma
-                const mrzData = findMRZInTextAdvanced(fullText);
-                
-                if (mrzData && mrzData.lines.length >= 3) {
-                    const parsedData = parseMRZ(mrzData.lines);
-                    
-                    if (parsedData && parsedData.tcNo) {
-                        displayResults(parsedData);
-                        updateStatus('İşlem tamamlandı', 'success');
-                    } else {
-                        throw new Error('MRZ kodu okunamadı. Lütfen daha net bir fotoğraf deneyin.');
-                    }
-                } else {
-                    throw new Error('MRZ kodu bulunamadı. Kimliğin arka yüzünü kullandığınızdan emin olun.');
-                }
-                
-            } catch (err) {
-                console.error('İşlem hatası:', err);
-                showError(err.message || 'Okuma sırasında bir hata oluştu.');
-                updateStatus('İşlem hatası', 'error');
-            }
-        }
-        
         // Gelişmiş MRZ bulma fonksiyonu
         function findMRZInTextAdvanced(text) {
             const lines = text.split('\n');
@@ -759,16 +828,10 @@
                     .replace(/\s/g, '')
                     .replace(/[^A-Z0-9<]/g, '');
                 
-                // MRZ karakteristikleri:
-                // - En az 15 karakter
-                // - Çoğunlukla büyük harf, rakam ve < içerir
-                // - TC no için rakam dizisi içerir
-                
                 if (cleanLine.length >= 15) {
                     // < işareti veya çok sayıda rakam varsa potansiyel MRZ
                     const hasAngleBrackets = cleanLine.includes('<');
                     const numberCount = (cleanLine.match(/[0-9]/g) || []).length;
-                    const letterCount = (cleanLine.match(/[A-Z]/g) || []).length;
                     
                     if (hasAngleBrackets || numberCount >= 5) {
                         console.log('Potansiyel MRZ satırı:', cleanLine);
@@ -778,189 +841,3 @@
             }
             
             // En az 3 satır varsa ve bunlar MRZ pattern'ine uyuyorsa
-            if (potentialMRZLines.length >= 3) {
-                // İlk 3 satırı al
-                return { lines: potentialMRZLines.slice(0, 3) };
-            }
-            
-            return null;
-        }
-        
-        // Gelişmiş MRZ satırı temizleme
-        function cleanMRZLineAdvanced(line) {
-            // Önce yaygın OCR hatalarını düzelt
-            let cleaned = line
-                .replace(/0/g, 'O')
-                .replace(/1/g, 'I')
-                .replace(/5/g, 'S')
-                .replace(/8/g, 'B')
-                .replace(/6/g, 'G')
-                .replace(/\s/g, '');
-            
-            // Eğer satır TC no pozisyonundaysa (2. satır), başındaki 11 karakteri rakama çevir
-            const tcPattern = /^[A-Z0-9]{11}/;
-            if (tcPattern.test(cleaned)) {
-                const tcPart = cleaned.substring(0, 11)
-                    .replace(/O/g, '0')
-                    .replace(/I/g, '1')
-                    .replace(/S/g, '5')
-                    .replace(/B/g, '8')
-                    .replace(/G/g, '6');
-                cleaned = tcPart + cleaned.substring(11);
-            }
-            
-            // 30 karaktere tamamla veya kısalt
-            if (cleaned.length < 30) {
-                cleaned = cleaned.padEnd(30, '<');
-            } else if (cleaned.length > 30) {
-                cleaned = cleaned.substring(0, 30);
-            }
-            
-            return cleaned;
-        }
-        
-        // MRZ satırı temizleme
-        function cleanMRZLine(line) {
-            let cleaned = line
-                .replace(/0/g, 'O')
-                .replace(/1/g, 'I')
-                .replace(/5/g, 'S')
-                .replace(/8/g, 'B')
-                .replace(/\s/g, '')
-                .replace(/[^A-Z0-9<]/g, '');
-            
-            if (cleaned.length > 11) {
-                const tcPart = cleaned.substring(0, 11)
-                    .replace(/O/g, '0')
-                    .replace(/I/g, '1')
-                    .replace(/S/g, '5')
-                    .replace(/B/g, '8');
-                cleaned = tcPart + cleaned.substring(11);
-            }
-            
-            return cleaned.padEnd(30, '<').substring(0, 30);
-        }
-        
-        // MRZ parse etme
-        function parseMRZ(mrzLines) {
-            try {
-                if (mrzLines.length < 3) return null;
-                
-                const line2 = mrzLines[1];
-                const line3 = mrzLines[2];
-                
-                const tcNo = line2.substring(0, 11).replace(/[^0-9]/g, '');
-                const birthDateRaw = line2.substring(13, 19).replace(/[^0-9]/g, '');
-                const genderChar = line2.charAt(20);
-                const expiryDateRaw = line2.substring(21, 27).replace(/[^0-9]/g, '');
-                
-                const gender = genderChar === 'E' || genderChar === 'M' ? 'Erkek' : 
-                             genderChar === 'K' || genderChar === 'F' ? 'Kadın' : '-';
-                
-                const nameParts = line3.split('<<');
-                let lastName = '';
-                let firstName = '';
-                
-                if (nameParts.length >= 2) {
-                    lastName = nameParts[0].replace(/</g, ' ').trim();
-                    firstName = nameParts[1].replace(/</g, ' ').trim();
-                }
-                
-                return {
-                    tcNo: tcNo,
-                    firstName: firstName || '-',
-                    lastName: lastName || '-',
-                    birthDate: formatDate(birthDateRaw),
-                    gender: gender,
-                    expiryDate: formatDate(expiryDateRaw),
-                    mrzLines: mrzLines
-                };
-                
-            } catch (err) {
-                console.error('Parse hatası:', err);
-                return null;
-            }
-        }
-        
-        // Tarih formatlama
-        function formatDate(dateStr) {
-            if (!dateStr || dateStr.length !== 6) return '-';
-            
-            const year = parseInt(dateStr.substring(0, 2));
-            const month = dateStr.substring(2, 4);
-            const day = dateStr.substring(4, 6);
-            
-            const fullYear = year > 30 ? 1900 + year : 2000 + year;
-            
-            return `${day}.${month}.${fullYear}`;
-        }
-        
-        // UI Fonksiyonları
-        function updateStatus(text, status) {
-            document.getElementById('statusText').textContent = text;
-            const indicator = document.getElementById('statusIndicator');
-            
-            indicator.className = 'status-indicator';
-            if (status === 'active') indicator.classList.add('active');
-            if (status === 'scanning') indicator.classList.add('scanning');
-        }
-        
-        function showError(message) {
-            const errorEl = document.getElementById('error');
-            errorEl.textContent = message;
-            errorEl.classList.add('active');
-        }
-        
-        function hideError() {
-            document.getElementById('error').classList.remove('active');
-        }
-        
-        function displayResults(data) {
-            document.getElementById('tcNo').textContent = data.tcNo || '-';
-            document.getElementById('firstName').textContent = data.firstName || '-';
-            document.getElementById('lastName').textContent = data.lastName || '-';
-            document.getElementById('birthDate').textContent = data.birthDate || '-';
-            document.getElementById('gender').textContent = data.gender || '-';
-            document.getElementById('expiryDate').textContent = data.expiryDate || '-';
-            
-            if (data.mrzLines) {
-                const mrzHtml = data.mrzLines.map(line => 
-                    `<div class="mrz-line">${line}</div>`
-                ).join('');
-                document.getElementById('mrzText').innerHTML = mrzHtml;
-            }
-            
-            document.getElementById('results').classList.add('active');
-            
-            // Taramayı durdur
-            if (isScanning) {
-                toggleScanning();
-            }
-        }
-        
-        function hideResults() {
-            document.getElementById('results').classList.remove('active');
-        }
-        
-        function resetApp() {
-            hideResults();
-            hideError();
-            updateStatus('Kamera hazır - Kimliği yeşil çerçeveye hizalayın', 'active');
-            
-            if (isScanning) {
-                toggleScanning();
-            }
-        }
-        
-        // Sayfa kapatılırken kaynakları temizle
-        window.addEventListener('beforeunload', () => {
-            if (stream) {
-                stream.getTracks().forEach(track => track.stop());
-            }
-            if (tesseractWorker) {
-                tesseractWorker.terminate();
-            }
-        });
-    </script>
-</body>
-</html>
