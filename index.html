@@ -47,6 +47,15 @@
   <h1>MRZ Okuyucu + Kayıt Görüntüleyici</h1>
 </header>
 <main>
+  <!-- Kamera Paneli -->
+  <section class="panel">
+    <h2>Kamera</h2>
+    <div class="content" style="position:relative">
+      <video id="video" autoplay playsinline></video>
+      <div class="mrz-window"></div>
+    </div>
+  </section>
+
   <!-- Form Paneli -->
   <section class="panel">
     <h2>Alanları Düzenle</h2>
@@ -178,6 +187,11 @@ document.getElementById("btnClear").onclick=()=>{
   inpTCKN.value=inpDOB.value=inpName.value=inpSurname.value=inpPhone.value="";
 };
 renderRecords();
+
+// Kamera aç
+navigator.mediaDevices.getUserMedia({video:true})
+  .then(stream=>{document.getElementById("video").srcObject=stream})
+  .catch(err=>alert("Kamera açılamadı: "+err));
 </script>
 </body>
 </html>
