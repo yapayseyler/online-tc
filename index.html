@@ -301,33 +301,75 @@
             margin: 8px 0;
         }
         
-        .camera-selector {
+        .camera-list {
             background: #f8f9fa;
             padding: 20px;
             border-radius: 15px;
             margin-bottom: 20px;
+        }
+        
+        .camera-list h3 {
+            margin-bottom: 20px;
+            color: #333;
             text-align: center;
         }
         
-        .camera-selector h3 {
-            margin-bottom: 15px;
-            color: #333;
-        }
-        
-        .camera-select {
-            width: 100%;
-            max-width: 400px;
-            padding: 12px;
-            margin: 10px auto;
-            border: 2px solid #667eea;
-            border-radius: 8px;
-            font-size: 16px;
-            background: white;
+        .camera-button {
             display: block;
+            width: 100%;
+            padding: 15px;
+            margin: 10px 0;
+            background: white;
+            border: 2px solid #667eea;
+            border-radius: 12px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-align: left;
         }
         
-        .camera-select option {
-            padding: 8px;
+        .camera-button:hover {
+            background: #f0f7ff;
+            border-color: #5a67d8;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.2);
+        }
+        
+        .camera-button .camera-title {
+            font-weight: bold;
+            color: #333;
+            display: block;
+            margin-bottom: 5px;
+        }
+        
+        .camera-button .camera-details {
+            font-size: 14px;
+            color: #666;
+            line-height: 1.4;
+        }
+        
+        .camera-type {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+        
+        .camera-type.front {
+            background: #fee;
+            color: #c33;
+        }
+        
+        .camera-type.back {
+            background: #efe;
+            color: #393;
+        }
+        
+        .camera-type.unknown {
+            background: #eef;
+            color: #669;
         }
         @media (max-width: 768px) {
             .container {
@@ -374,22 +416,17 @@
             
             <!-- Kamera Alanı -->
             <div class="camera-section">
-                <!-- Kamera Seçimi -->
-                <div class="camera-selector" id="cameraSelector" style="display: none;">
-                    <h3>📷 Kamera Seçin:</h3>
-                    <select id="cameraSelect" class="camera-select">
-                        <option value="">Kamera seçin...</option>
-                    </select>
-                    <button class="btn btn-primary" onclick="selectCamera()">Seçili Kamerayı Aç</button>
+                <!-- Kamera Listesi -->
+                <div class="camera-list" id="cameraList" style="display: none;">
+                    <h3>📷 Mevcut Kameralar - Birini Tıklayın:</h3>
+                    <div id="cameraButtons"></div>
                 </div>
                 
                 <div class="video-container" id="videoContainer" style="display: none;">
                     <video id="video" autoplay playsinline></video>
                     <div class="camera-overlay">
-                        <div>🎯 Kimliğin arka yüzünü MRZ rehberinin içine hizalayın</div>
-                        <div style="margin-top: 10px; font-size: 12px;">
-                            <span id="currentCamera">Aktif kamera: -</span>
-                        </div>
+                        <div>🎯 Açılan Kamera: <span id="activeCameraName" style="color: #00ff00; font-weight: bold;">-</span></div>
+                        <div style="margin-top: 5px;">MRZ rehberinin içine hizalayın</div>
                     </div>
                     <div class="mrz-guide">
                         <div class="mrz-guide-text">MRZ ALANI - 3 SATIR BURADA OLMALI</div>
@@ -397,8 +434,8 @@
                 </div>
                 
                 <div class="camera-controls">
-                    <button class="btn btn-primary" id="startCameraBtn" onclick="listCameras()">
-                        📷 Kameraları Listele
+                    <button class="btn btn-primary" id="startCameraBtn" onclick="showAllCameras()">
+                        📷 Tüm Kameraları Göster
                     </button>
                     <button class="btn btn-success" id="scanBtn" onclick="toggleScanning()" style="display: none;">
                         🔍 Taramaya Başla
@@ -406,7 +443,7 @@
                     <button class="btn btn-secondary" id="captureBtn" onclick="captureImage()" style="display: none;">
                         📸 Fotoğraf Çek
                     </button>
-                    <button class="btn btn-secondary" id="switchBtn" onclick="showCameraSelector()" style="display: none;">
+                    <button class="btn btn-secondary" id="switchBtn" onclick="showAllCameras()" style="display: none;">
                         🔄 Kamera Değiştir
                     </button>
                     <button class="btn btn-danger" id="stopBtn" onclick="stopCamera()" style="display: none;">
@@ -494,9 +531,9 @@
             updateStatus('Hazır - Kamera başlatılabilir', 'ready');
         });
         
-        // Kameraları listele ve göster
-        async function listCameras() {
-            updateStatus('Kameralar listeleniyor...', 'loading');
+        // Tüm kameraları göster
+        async function showAllCameras() {
+            updateStatus('Kameralar tespit ediliyor...', 'loading');
             
             try {
                 // Önce basit izin al
@@ -507,39 +544,65 @@
                 const devices = await navigator.mediaDevices.enumerateDevices();
                 const videoDevices = devices.filter(device => device.kind === 'videoinput');
                 
-                console.log('🎥 BULUNAN KAMERALAR:');
+                console.log('🎥 TÜM KAMERALAR:');
                 
-                const cameraSelect = document.getElementById('cameraSelect');
-                cameraSelect.innerHTML = '<option value="">Kamera seçin...</option>';
+                const cameraButtons = document.getElementById('cameraButtons');
+                cameraButtons.innerHTML = '';
                 
-                videoDevices.forEach((device, index) => {
-                    console.log(`${index}: ${device.label} (ID: ${device.deviceId})`);
+                // Her kamera için detaylı bilgi topla
+                for (let i = 0; i < videoDevices.length; i++) {
+                    const device = videoDevices[i];
                     
-                    const option = document.createElement('option');
-                    option.value = device.deviceId;
+                    console.log(`${i}: ${device.label} (ID: ${device.deviceId})`);
                     
-                    // Kamera adını analiz et
-                    let cameraName = device.label || `Kamera ${index + 1}`;
+                    // Kamera testini yap
+                    let testResult = await testCamera(device);
                     
-                    // Ön/arka kamera tespiti
-                    const lowerLabel = cameraName.toLowerCase();
+                    // Kamera butonunu oluştur
+                    const button = document.createElement('button');
+                    button.className = 'camera-button';
+                    button.onclick = () => selectSpecificCamera(device.deviceId, device.label);
+                    
+                    // Kamera tipini belirle
+                    const lowerLabel = device.label.toLowerCase();
+                    let cameraType = 'unknown';
+                    let typeText = 'Bilinmeyen';
+                    
                     if (lowerLabel.includes('front') || lowerLabel.includes('selfie') || lowerLabel.includes('user')) {
-                        cameraName += ' (ÖN KAMERA 📱)';
+                        cameraType = 'front';
+                        typeText = 'ÖN KAMERA 🤳';
                     } else if (lowerLabel.includes('back') || lowerLabel.includes('rear') || lowerLabel.includes('environment')) {
-                        cameraName += ' (ARKA KAMERA 📷)';
-                    } else if (index === 0) {
-                        cameraName += ' (Muhtemelen ön kamera)';
-                    } else if (index === 1) {
-                        cameraName += ' (Muhtemelen arka kamera)';
+                        cameraType = 'back';
+                        typeText = 'ARKA KAMERA 📷';
+                    } else if (i === 0) {
+                        cameraType = 'front';
+                        typeText = 'MUHTEMELEN ÖN 🤳';
+                    } else if (i === 1) {
+                        cameraType = 'back';
+                        typeText = 'MUHTEMELEN ARKA 📷';
                     }
                     
-                    option.textContent = cameraName;
-                    cameraSelect.appendChild(option);
-                });
+                    button.innerHTML = `
+                        <span class="camera-title">
+                            Kamera ${i + 1}
+                            <span class="camera-type ${cameraType}">${typeText}</span>
+                        </span>
+                        <div class="camera-details">
+                            <strong>Ad:</strong> ${device.label || 'İsimsiz Kamera'}<br>
+                            <strong>Çözünürlük:</strong> ${testResult.resolution}<br>
+                            <strong>ID:</strong> ${device.deviceId.slice(0, 30)}...
+                        </div>
+                    `;
+                    
+                    cameraButtons.appendChild(button);
+                }
                 
-                // Kamera seçicisini göster
-                document.getElementById('cameraSelector').style.display = 'block';
-                document.getElementById('startCameraBtn').textContent = '🔄 Kameraları Yeniden Listele';
+                // Kamera listesini göster
+                document.getElementById('cameraList').style.display = 'block';
+                document.getElementById('videoContainer').style.display = 'none';
+                
+                // Buton metnini güncelle
+                document.getElementById('startCameraBtn').textContent = '🔄 Kameraları Yeniden Tara';
                 
                 updateStatus(`${videoDevices.length} kamera bulundu - Birini seçin`, 'ready');
                 hideError();
@@ -551,15 +614,48 @@
             }
         }
         
-        // Seçili kamerayı aç
-        async function selectCamera() {
-            const selectedDeviceId = document.getElementById('cameraSelect').value;
-            
-            if (!selectedDeviceId) {
-                showError('Lütfen bir kamera seçin!');
-                return;
+        // Kamerayı test et
+        async function testCamera(device) {
+            try {
+                const testStream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        deviceId: { exact: device.deviceId },
+                        width: { ideal: 1920 },
+                        height: { ideal: 1080 }
+                    }
+                });
+                
+                const track = testStream.getVideoTracks()[0];
+                const settings = track.getSettings();
+                const capabilities = track.getCapabilities();
+                
+                testStream.getTracks().forEach(t => t.stop());
+                
+                const resolution = `${settings.width}x${settings.height}`;
+                const maxResolution = capabilities.width?.max ? `(Max: ${capabilities.width.max}x${capabilities.height?.max})` : '';
+                
+                console.log(`📐 ${device.label}: ${resolution} ${maxResolution}`);
+                
+                return {
+                    resolution: `${resolution} ${maxResolution}`,
+                    width: settings.width,
+                    height: settings.height,
+                    facingMode: settings.facingMode
+                };
+                
+            } catch (err) {
+                console.log(`❌ Test başarısız: ${device.label} - ${err.message}`);
+                return {
+                    resolution: 'Test edilemedi',
+                    width: 0,
+                    height: 0,
+                    facingMode: 'unknown'
+                };
             }
-            
+        }
+        
+        // Belirli kamerayı seç
+        async function selectSpecificCamera(deviceId, deviceLabel) {
             updateStatus('Seçili kamera açılıyor...', 'loading');
             
             try {
@@ -571,24 +667,24 @@
                 // Seçili kamera ile stream aç
                 const constraints = {
                     video: {
-                        deviceId: { exact: selectedDeviceId },
+                        deviceId: { exact: deviceId },
                         width: { ideal: 1920, min: 640, max: 4096 },
-                        height: { ideal: 1080, min: 480, max: 2160 },
-                        frameRate: { ideal: 30, min: 15 }
+                        height: { ideal: 1080, min: 480, max: 2160 }
                     },
                     audio: false
                 };
                 
-                console.log('🎯 Seçili kamera constraints:', constraints);
+                console.log(`🎯 AÇILIYOR: ${deviceLabel}`);
+                console.log('Constraints:', constraints);
+                
                 stream = await navigator.mediaDevices.getUserMedia(constraints);
                 
                 // Stream bilgilerini al
                 const videoTrack = stream.getVideoTracks()[0];
                 const settings = videoTrack.getSettings();
-                const selectedCameraName = document.getElementById('cameraSelect').selectedOptions[0].textContent;
                 
-                console.log(`🎬 AKTİF KAMERA: ${videoTrack.label}`);
-                console.log(`📐 ÇÖZÜNÜRLÜK: ${settings.width}x${settings.height}`);
+                console.log(`✅ AÇILDI: ${videoTrack.label}`);
+                console.log(`📐 GERÇEK ÇÖZÜNÜRLÜK: ${settings.width}x${settings.height}`);
                 console.log(`🎯 FACING MODE: ${settings.facingMode || 'belirtilmemiş'}`);
                 
                 // Video element'e bağla
@@ -598,9 +694,9 @@
                     video.play();
                     
                     // UI güncelle
-                    document.getElementById('cameraSelector').style.display = 'none';
+                    document.getElementById('cameraList').style.display = 'none';
                     document.getElementById('videoContainer').style.display = 'block';
-                    document.getElementById('currentCamera').textContent = `Aktif: ${selectedCameraName}`;
+                    document.getElementById('activeCameraName').textContent = videoTrack.label;
                     
                     document.getElementById('startCameraBtn').style.display = 'none';
                     document.getElementById('scanBtn').style.display = 'inline-block';
@@ -608,58 +704,30 @@
                     document.getElementById('switchBtn').style.display = 'inline-block';
                     document.getElementById('stopBtn').style.display = 'inline-block';
                     
-                    updateStatus(`Kamera hazır: ${settings.width}x${settings.height}`, 'active');
+                    updateStatus(`Kamera aktif: ${settings.width}x${settings.height}`, 'active');
                     hideError();
                     
-                    console.log('✅ KAMERA BAŞARILI ŞEKİLDE BAŞLATILDI!');
+                    console.log('🎬 KAMERA BAŞARIYLA AÇILDI VE VİDEO OYNATILIYOR!');
                 };
                 
             } catch (err) {
                 console.error('❌ KAMERA AÇMA HATASI:', err);
                 
-                let errorMessage = 'Seçili kamera açılamadı: ';
+                let errorMessage = 'Bu kamera açılamadı: ';
                 
                 if (err.name === 'NotAllowedError') {
-                    errorMessage = 'Kamera izni reddedildi!';
+                    errorMessage = '❌ Kamera izni reddedildi!';
                 } else if (err.name === 'NotReadableError') {
-                    errorMessage = 'Bu kamera başka bir uygulama tarafından kullanılıyor!';
+                    errorMessage = '❌ Bu kamera başka bir uygulama tarafından kullanılıyor!';
                 } else if (err.name === 'OverconstrainedError') {
-                    errorMessage = 'Bu kamera istenen ayarları desteklemiyor!';
+                    errorMessage = '❌ Bu kamera istenen ayarları desteklemiyor!';
                 } else {
                     errorMessage += err.message;
                 }
                 
-                showError(errorMessage);
-                updateStatus('Kamera hatası', 'error');
+                showError(errorMessage + '\n\nBaşka bir kamera deneyin.');
+                updateStatus('Kamera hatası - Başka kamera deneyin', 'error');
             }
-        }
-        
-        // Kamera seçicisini tekrar göster
-        function showCameraSelector() {
-            // Video durdur
-            if (stream) {
-                stream.getTracks().forEach(track => track.stop());
-                stream = null;
-            }
-            
-            video.srcObject = null;
-            
-            // Taramayı durdur
-            if (isScanning) {
-                toggleScanning();
-            }
-            
-            // UI güncelle
-            document.getElementById('videoContainer').style.display = 'none';
-            document.getElementById('cameraSelector').style.display = 'block';
-            
-            document.getElementById('startCameraBtn').style.display = 'inline-block';
-            document.getElementById('scanBtn').style.display = 'none';
-            document.getElementById('captureBtn').style.display = 'none';
-            document.getElementById('switchBtn').style.display = 'none';
-            document.getElementById('stopBtn').style.display = 'none';
-            
-            updateStatus('Kamera seçin', 'ready');
         }
         
         // Kamera durdurma
