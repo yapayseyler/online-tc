@@ -985,12 +985,12 @@
             }
         }
         
-        // Gelişmiş MRZ bulma fonksiyonu
+        // Gelişmiş MRZ bulma - Türk kimlik formatına optimize
         function findMRZInTextAdvanced(text) {
             const lines = text.split('\n');
             const potentialMRZLines = [];
             
-            console.log('Tüm satırlar:', lines);
+            console.log('🔍 MRZ Arama - Tüm satırlar:', lines);
             
             for (let line of lines) {
                 // Satırı temizle
@@ -999,62 +999,125 @@
                     .replace(/\s/g, '')
                     .replace(/[^A-Z0-9<]/g, '');
                 
-                // MRZ karakteristikleri:
-                // - En az 15 karakter
-                // - Çoğunlukla büyük harf, rakam ve < içerir
-                // - TC no için rakam dizisi içerir
+                // Türk kimlik MRZ karakteristikleri:
+                // 1. Satır: I<TUR... ile başlar
+                // 2. Satır: 11 haneli TC No + tarihler
+                // 3. Satır: SOYAD<<AD formatında
                 
                 if (cleanLine.length >= 15) {
-                    // < işareti veya çok sayıda rakam varsa potansiyel MRZ
-                    const hasAngleBrackets = cleanLine.includes('<');
-                    const numberCount = (cleanLine.match(/[0-9]/g) || []).length;
-                    const letterCount = (cleanLine.match(/[A-Z]/g) || []).length;
+                    let isMRZLine = false;
+                    let lineType = '';
                     
-                    if (hasAngleBrackets || numberCount >= 5) {
-                        console.log('Potansiyel MRZ satırı:', cleanLine);
+                    // 1. Satır kontrolü: I<TUR ile başlar
+                    if (cleanLine.startsWith('I<TUR') || cleanLine.includes('TUR')) {
+                        isMRZLine = true;
+                        lineType = 'Satır 1 (Ülke kodu)';
+                    }
+                    
+                    // 2. Satır kontrolü: Çok sayıda rakam içerir (TC No + tarihler)
+                    const numberCount = (cleanLine.match(/[0-9]/g) || []).length;
+                    if (numberCount >= 15) { // En az 11 (TC) + 6 (doğum) = 17 rakam bekleniyor
+                        isMRZLine = true;
+                        lineType = 'Satır 2 (TC No + Tarihler)';
+                    }
+                    
+                    // 3. Satır kontrolü: << işareti içerir (isim formatı)
+                    if (cleanLine.includes('<<') && cleanLine.match(/[A-Z]/g)?.length >= 5) {
+                        isMRZLine = true;
+                        lineType = 'Satır 3 (Ad Soyad)';
+                    }
+                    
+                    // Genel MRZ kontrolü: < işareti veya karma karakter
+                    if (!isMRZLine) {
+                        const hasAngleBrackets = cleanLine.includes('<');
+                        const letterCount = (cleanLine.match(/[A-Z]/g) || []).length;
+                        
+                        if ((hasAngleBrackets && letterCount >= 3) || 
+                            (numberCount >= 8 && letterCount >= 3)) {
+                            isMRZLine = true;
+                            lineType = 'Genel MRZ';
+                        }
+                    }
+                    
+                    if (isMRZLine) {
+                        console.log(`✅ MRZ satırı bulundu (${lineType}):`, cleanLine);
                         potentialMRZLines.push(cleanMRZLineAdvanced(cleanLine));
                     }
                 }
             }
             
-            // En az 3 satır varsa ve bunlar MRZ pattern'ine uyuyorsa
+            // En az 3 satır varsa başarılı
             if (potentialMRZLines.length >= 3) {
-                // İlk 3 satırı al
+                console.log('🎯 MRZ tamamlandı, ilk 3 satır alınıyor');
                 return { lines: potentialMRZLines.slice(0, 3) };
+            } else {
+                console.log(`❌ Yetersiz MRZ satırı: ${potentialMRZLines.length}/3`);
+                return null;
             }
-            
-            return null;
         }
         
-        // Tam görüntü MRZ bulma (Orijinal methodunuzdan esinlenen)
+        // Tam görüntü MRZ bulma - Daha kapsamlı
         function findMRZInTextComplete(text) {
             const lines = text.split('\n');
             const potentialMRZLines = [];
             
-            console.log('TÜM SATIRLAR:', lines);
+            console.log('🔍 FULL MRZ Arama - Tüm metin analizi');
+            console.log('Toplam satır sayısı:', lines.length);
             
-            for (let line of lines) {
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
                 let cleanLine = line
                     .toUpperCase()
                     .replace(/\s/g, '')
                     .replace(/[^A-Z0-9<]/g, '');
                 
-                // Daha esnek MRZ detection
-                if (cleanLine.length >= 12) {
+                if (cleanLine.length >= 10) {
                     const hasNumbers = (cleanLine.match(/[0-9]/g) || []).length >= 3;
                     const hasLetters = (cleanLine.match(/[A-Z]/g) || []).length >= 3;
                     const hasAngleBrackets = cleanLine.includes('<');
+                    const hasTurkishPattern = cleanLine.includes('TUR') || cleanLine.startsWith('I<');
                     
-                    // MRZ pattern indicators
-                    if ((hasNumbers && hasLetters) || hasAngleBrackets || cleanLine.length >= 25) {
-                        console.log('Potansiyel MRZ (FULL):', cleanLine);
+                    // Çok esnek MRZ detection
+                    let isMRZCandidate = false;
+                    let reason = '';
+                    
+                    if (hasTurkishPattern) {
+                        isMRZCandidate = true;
+                        reason = 'Türk kimlik pattern';
+                    } else if (hasAngleBrackets && (hasNumbers || hasLetters)) {
+                        isMRZCandidate = true;
+                        reason = 'Angle brackets + content';
+                    } else if (hasNumbers && hasLetters && cleanLine.length >= 20) {
+                        isMRZCandidate = true;
+                        reason = 'Mixed content + length';
+                    } else if ((cleanLine.match(/[0-9]/g) || []).length >= 10) {
+                        isMRZCandidate = true;
+                        reason = 'Many numbers (TC pattern)';
+                    }
+                    
+                    if (isMRZCandidate) {
+                        console.log(`✅ MRZ candidate (${reason}):`, cleanLine);
                         potentialMRZLines.push(cleanMRZLineAdvanced(cleanLine));
                     }
                 }
             }
             
+            console.log(`📊 Toplam MRZ candidate: ${potentialMRZLines.length}`);
+            
             if (potentialMRZLines.length >= 3) {
-                return { lines: potentialMRZLines.slice(0, 3) };
+                // En iyi 3 satırı seç (en uzun ve en çok karakter içerenler)
+                const sorted = potentialMRZLines
+                    .map((line, index) => ({
+                        line: line,
+                        score: line.length + (line.match(/[0-9]/g) || []).length * 2 + (line.includes('<<') ? 10 : 0),
+                        index: index
+                    }))
+                    .sort((a, b) => b.score - a.score);
+                
+                const best3 = sorted.slice(0, 3).map(item => item.line);
+                console.log('🏆 En iyi 3 MRZ satırı seçildi:', best3);
+                
+                return { lines: best3 };
             }
             
             return null;
@@ -1093,56 +1156,160 @@
             return cleaned;
         }
         
-        // MRZ parse etme
+        // MRZ parse etme - Gerçek örneklere göre optimize edilmiş
         function parseMRZ(mrzLines) {
             try {
                 if (mrzLines.length < 3) return null;
                 
-                const line2 = mrzLines[1];
-                const line3 = mrzLines[2];
+                console.log('🔍 MRZ Parse Başlıyor:');
+                console.log('Satır 1:', mrzLines[0]);
+                console.log('Satır 2:', mrzLines[1]);
+                console.log('Satır 3:', mrzLines[2]);
                 
-                const tcNo = line2.substring(0, 11).replace(/[^0-9]/g, '');
-                const birthDateRaw = line2.substring(13, 19).replace(/[^0-9]/g, '');
-                const genderChar = line2.charAt(20);
-                const expiryDateRaw = line2.substring(21, 27).replace(/[^0-9]/g, '');
+                const line1 = mrzLines[0]; // I<TUR...
+                const line2 = mrzLines[1]; // TC No + Doğum + Cinsiyet + Son geçerlilik
+                const line3 = mrzLines[2]; // SOYAD<<AD formatında
                 
-                const gender = genderChar === 'E' || genderChar === 'M' ? 'Erkek' : 
-                             genderChar === 'K' || genderChar === 'F' ? 'Kadın' : '-';
+                // SATIR 2 ANALİZİ
+                // TC Kimlik No: İlk 11 rakam (pozisyon 0-10)
+                let tcNo = '';
+                for (let i = 0; i < line2.length && tcNo.length < 11; i++) {
+                    const char = line2.charAt(i);
+                    if (/[0-9]/.test(char)) {
+                        tcNo += char;
+                    } else if (/[O]/.test(char)) {
+                        tcNo += '0'; // O harfini 0'a çevir
+                    } else if (/[I]/.test(char)) {
+                        tcNo += '1'; // I harfini 1'e çevir
+                    }
+                }
                 
+                console.log('🆔 TC No çıkarıldı:', tcNo);
+                
+                // Doğum tarihi: TC No'dan sonraki 6 rakam (YYMMDD formatında)
+                let birthDateRaw = '';
+                let digitCount = 0;
+                let startFound = false;
+                
+                for (let i = 0; i < line2.length && birthDateRaw.length < 6; i++) {
+                    const char = line2.charAt(i);
+                    
+                    if (/[0-9O]/.test(char)) {
+                        digitCount++;
+                        
+                        // İlk 11 rakamı geçtikten sonra doğum tarihini topla
+                        if (digitCount > 11) {
+                            startFound = true;
+                        }
+                        
+                        if (startFound) {
+                            birthDateRaw += char === 'O' ? '0' : char;
+                        }
+                    }
+                }
+                
+                console.log('📅 Doğum tarihi raw:', birthDateRaw);
+                
+                // Cinsiyet: Line2'de M, F, E, K harflerini ara
+                let gender = '-';
+                for (let i = 0; i < line2.length; i++) {
+                    const char = line2.charAt(i);
+                    if (char === 'M' || char === 'E') {
+                        gender = 'Erkek';
+                        break;
+                    } else if (char === 'F' || char === 'K') {
+                        gender = 'Kadın';
+                        break;
+                    }
+                }
+                
+                console.log('👤 Cinsiyet:', gender);
+                
+                // Son geçerlilik tarihi: Doğum tarihinden sonraki 6 rakam
+                let expiryDateRaw = '';
+                let afterBirth = false;
+                let birthFound = false;
+                digitCount = 0;
+                
+                for (let i = 0; i < line2.length; i++) {
+                    const char = line2.charAt(i);
+                    
+                    if (/[0-9O]/.test(char)) {
+                        digitCount++;
+                        
+                        // TC No (11) + Doğum (6) = 17 rakamdan sonra son geçerlilik
+                        if (digitCount > 17 && expiryDateRaw.length < 6) {
+                            expiryDateRaw += char === 'O' ? '0' : char;
+                        }
+                    }
+                }
+                
+                console.log('⏰ Son geçerlilik raw:', expiryDateRaw);
+                
+                // SATIR 3 ANALİZİ - İsim parsing
+                // Format: SOYAD<<AD<<<< şeklinde
+                const nameLine = line3.replace(/</g, ' ').trim();
                 const nameParts = line3.split('<<');
+                
                 let lastName = '';
                 let firstName = '';
                 
                 if (nameParts.length >= 2) {
-                    lastName = nameParts[0].replace(/</g, ' ').trim();
+                    // İlk kısım soyad
+                    lastName = nameParts[0].replace(/</g, '').trim();
+                    
+                    // İkinci kısım ad (<<'den sonraki kısım)
                     firstName = nameParts[1].replace(/</g, ' ').trim();
+                } else {
+                    // Alternatif parsing: Boşluklarla ayır
+                    const names = nameLine.split(/\s+/);
+                    if (names.length >= 2) {
+                        lastName = names[0];
+                        firstName = names.slice(1).join(' ');
+                    } else if (names.length === 1) {
+                        lastName = names[0];
+                        firstName = '';
+                    }
                 }
                 
-                return {
+                console.log('👨 Soyad:', lastName);
+                console.log('👨 Ad:', firstName);
+                
+                const result = {
                     tcNo: tcNo,
                     firstName: firstName || '-',
                     lastName: lastName || '-',
-                    birthDate: formatDate(birthDateRaw),
+                    birthDate: formatTurkishDate(birthDateRaw),
                     gender: gender,
-                    expiryDate: formatDate(expiryDateRaw),
+                    expiryDate: formatTurkishDate(expiryDateRaw),
                     mrzLines: mrzLines
                 };
                 
+                console.log('✅ Final Result:', result);
+                return result;
+                
             } catch (err) {
-                console.error('Parse hatası:', err);
+                console.error('❌ Parse hatası:', err);
                 return null;
             }
         }
         
-        // Tarih formatlama
-        function formatDate(dateStr) {
-            if (!dateStr || dateStr.length !== 6) return '-';
+        // Türk kimlik tarihi formatlama (YYMMDD -> DD.MM.YYYY)
+        function formatTurkishDate(dateStr) {
+            if (!dateStr || dateStr.length !== 6) {
+                console.log('⚠️ Geçersiz tarih:', dateStr);
+                return '-';
+            }
             
             const year = parseInt(dateStr.substring(0, 2));
             const month = dateStr.substring(2, 4);
             const day = dateStr.substring(4, 6);
             
+            // 2000 öncesi/sonrası kontrolü (30 yaş altı = 2000+, üzeri = 1900+)
+            const currentYear = new Date().getFullYear();
             const fullYear = year > 30 ? 1900 + year : 2000 + year;
+            
+            console.log(`📅 Tarih dönüşümü: ${dateStr} -> ${day}.${month}.${fullYear}`);
             
             return `${day}.${month}.${fullYear}`;
         }
