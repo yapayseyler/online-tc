@@ -41,32 +41,12 @@
     th,td{padding:8px;border-bottom:1px solid #2a3547;text-align:left;font-size:14px}
     th{background:#1a1f2e;color:#4f8cff}
   </style>
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 </head>
 <body>
 <header>
   <h1>MRZ Okuyucu + Kayıt Görüntüleyici</h1>
 </header>
 <main>
-  <!-- OCR Tarama Paneli -->
-  <section class="panel">
-    <h2>Kimlik Tara</h2>
-    <div class="content">
-      <div class="toolbar">
-        <button id="btnOpen" class="btn-primary">Kamerayı Aç</button>
-        <button id="btnStop" class="btn-ghost">Kapat</button>
-        <button id="btnSnap" class="btn-primary">Tara</button>
-        <input type="file" id="file" accept="image/*"/>
-        <button id="btnOCR" class="btn-primary">Resmi Tara</button>
-      </div>
-      <video id="video" autoplay playsinline></video>
-      <img id="img" style="display:none"/>
-      <div class="mrz-window"></div>
-      <pre id="rawText" style="background:#111827;padding:8px;border-radius:8px;max-height:120px;overflow:auto"></pre>
-      <div id="fields"></div>
-    </div>
-  </section>
-  
   <!-- Form Paneli -->
   <section class="panel">
     <h2>Alanları Düzenle</h2>
@@ -78,9 +58,11 @@
         <span id="errDOB" class="error"></span>
         <label>Ad <input type="text" id="inpName"/></label>
         <label>Soyad <input type="text" id="inpSurname"/></label>
+        <label>Telefon <input type="tel" id="inpPhone" maxlength="15" placeholder="05xx..."/></label>
       </div>
       <div class="toolbar">
         <button id="btnSave" class="btn-primary">Kaydet</button>
+        <button id="btnSend" class="btn-primary">Gönder</button>
         <button id="btnClear" class="btn-ghost">Temizle</button>
         <span id="validityTag">Geçerlilik: —</span>
       </div>
@@ -97,7 +79,7 @@
       </div>
       <div id="cards"></div>
       <table>
-        <thead><tr><th>#</th><th>TCKN</th><th>Ad Soyad</th><th>Doğum Tarihi</th><th>Zaman</th></tr></thead>
+        <thead><tr><th>#</th><th>TCKN</th><th>Ad Soyad</th><th>Telefon</th><th>Doğum Tarihi</th><th>Zaman</th></tr></thead>
         <tbody id="tableBody"></tbody>
       </table>
     </div>
@@ -106,17 +88,95 @@
 
 <script>
 const STORAGE_KEY="mrzKayitlar";
-const video=document.getElementById("video"),imgEl=document.getElementById("img"),rawText=document.getElementById("rawText"),fieldsEl=document.getElementById("fields");
-const inpTCKN=document.getElementById("inpTCKN"),inpDOB=document.getElementById("inpDOB"),inpName=document.getElementById("inpName"),inpSurname=document.getElementById("inpSurname"),errTCKN=document.getElementById("errTCKN"),errDOB=document.getElementById("errDOB"),validityTag=document.getElementById("validityTag");
-function validateTCKN(id){if(!/^[1-9]\\d{10}$/.test(id))return false;const d=id.split("").map(Number);const odd=d[0]+d[2]+d[4]+d[6]+d[8];const even=d[1]+d[3]+d[5]+d[7];const d10=((7*odd)-even)%10;const d11=d.slice(0,10).reduce((a,b)=>a+b,0)%10;return d10===d[9]&&d11===d[10];}
+const inpTCKN=document.getElementById("inpTCKN"),
+      inpDOB=document.getElementById("inpDOB"),
+      inpName=document.getElementById("inpName"),
+      inpSurname=document.getElementById("inpSurname"),
+      inpPhone=document.getElementById("inpPhone"),
+      errTCKN=document.getElementById("errTCKN"),
+      errDOB=document.getElementById("errDOB"),
+      validityTag=document.getElementById("validityTag");
+
+function validateTCKN(id){
+  if(!/^[1-9]\\d{10}$/.test(id))return false;
+  const d=id.split("").map(Number);
+  const odd=d[0]+d[2]+d[4]+d[6]+d[8];
+  const even=d[1]+d[3]+d[5]+d[7];
+  const d10=((7*odd)-even)%10;
+  const d11=d.slice(0,10).reduce((a,b)=>a+b,0)%10;
+  return d10===d[9]&&d11===d[10];
+}
 function validateDateISO(s){if(!s)return false;const d=new Date(s);return !isNaN(d);}
-function validateForm(){let ok=true;if(!validateTCKN(inpTCKN.value)){errTCKN.textContent="Geçersiz TCKN";ok=false}else errTCKN.textContent="";if(!validateDateISO(inpDOB.value)){errDOB.textContent="Geçersiz tarih";ok=false}else errDOB.textContent="";validityTag.textContent="Geçerlilik: "+(ok?"Uygun":"Hatalı");return ok;}
-function getFormData(){return{tckn:inpTCKN.value,ad:inpName.value,soyad:inpSurname.value,dob:inpDOB.value,timestamp:Date.now()};}
+function validateForm(){
+  let ok=true;
+  if(!validateTCKN(inpTCKN.value)){errTCKN.textContent="Geçersiz TCKN";ok=false}else errTCKN.textContent="";
+  if(!validateDateISO(inpDOB.value)){errDOB.textContent="Geçersiz tarih";ok=false}else errDOB.textContent="";
+  validityTag.textContent="Geçerlilik: "+(ok?"Uygun":"Hatalı");
+  return ok;
+}
+function getFormData(){
+  return{
+    tckn:inpTCKN.value,
+    ad:inpName.value,
+    soyad:inpSurname.value,
+    dob:inpDOB.value,
+    phone:inpPhone.value,
+    timestamp:Date.now()
+  };
+}
 function loadStore(){return JSON.parse(localStorage.getItem(STORAGE_KEY)||"[]");}
-function saveStore(arr){localStorage.setItem(STORAGE_KEY,JSON.stringify(arr));renderRecords();}
-function renderRecords(){const data=loadStore();document.getElementById("totalRecords").textContent=data.length;const today=new Date();today.setHours(0,0,0,0);document.getElementById("todayRecords").textContent=data.filter(r=>{const d=new Date(r.timestamp);d.setHours(0,0,0,0);return d.getTime()===today.getTime();}).length;const cards=document.getElementById("cards"),tbody=document.getElementById("tableBody");cards.innerHTML="";tbody.innerHTML="";data.forEach((r,i)=>{const card=document.createElement("div");card.className="record-card";card.innerHTML=\`<div class="record-header"><div class="record-name">\${r.ad} \${r.soyad}</div><div>\${new Date(r.timestamp).toLocaleString("tr-TR")}</div></div><div class="detail-item"><span class="detail-label">TCKN</span><span class="detail-value">\${r.tckn}</span></div><div class="detail-item"><span class="detail-label">Doğum</span><span class="detail-value">\${r.dob}</span></div>\`;cards.appendChild(card);const row=tbody.insertRow();row.insertCell().textContent=i+1;row.insertCell().textContent=r.tckn;row.insertCell().textContent=r.ad+" "+r.soyad;row.insertCell().textContent=r.dob;row.insertCell().textContent=new Date(r.timestamp).toLocaleString("tr-TR");});}
-document.getElementById("btnSave").onclick=()=>{if(!validateForm())return;const arr=loadStore();arr.push(getFormData());saveStore(arr);alert("Kayıt eklendi.");};
-document.getElementById("btnClear").onclick=()=>{inpTCKN.value=inpDOB.value=inpName.value=inpSurname.value="";};
+function saveStore(arr){localStorage.setItem(STORAGE_KEY,JSON.stringify(arr));}
+function renderRecords(){
+  const data=loadStore();
+  document.getElementById("totalRecords").textContent=data.length;
+  const today=new Date();today.setHours(0,0,0,0);
+  document.getElementById("todayRecords").textContent=data.filter(r=>{
+    const d=new Date(r.timestamp);d.setHours(0,0,0,0);
+    return d.getTime()===today.getTime();
+  }).length;
+  const cards=document.getElementById("cards"),
+        tbody=document.getElementById("tableBody");
+  cards.innerHTML="";tbody.innerHTML="";
+  data.forEach((r,i)=>{
+    const card=document.createElement("div");
+    card.className="record-card";
+    card.innerHTML=\`
+      <div class="record-header">
+        <div class="record-name">\${r.ad} \${r.soyad}</div>
+        <div>\${new Date(r.timestamp).toLocaleString("tr-TR")}</div>
+      </div>
+      <div class="detail-item"><span class="detail-label">TCKN</span><span class="detail-value">\${r.tckn}</span></div>
+      <div class="detail-item"><span class="detail-label">Telefon</span><span class="detail-value">\${r.phone}</span></div>
+      <div class="detail-item"><span class="detail-label">Doğum</span><span class="detail-value">\${r.dob}</span></div>
+    \`;
+    cards.appendChild(card);
+    const row=tbody.insertRow();
+    row.insertCell().textContent=i+1;
+    row.insertCell().textContent=r.tckn;
+    row.insertCell().textContent=r.ad+" "+r.soyad;
+    row.insertCell().textContent=r.phone;
+    row.insertCell().textContent=r.dob;
+    row.insertCell().textContent=new Date(r.timestamp).toLocaleString("tr-TR");
+  });
+}
+document.getElementById("btnSave").onclick=()=>{
+  if(!validateForm())return;
+  const arr=loadStore();
+  arr.push(getFormData());
+  saveStore(arr);
+  alert("Kayıt kaydedildi (henüz gönderilmedi).");
+};
+document.getElementById("btnSend").onclick=()=>{
+  if(!validateForm())return;
+  const arr=loadStore();
+  arr.push(getFormData());
+  saveStore(arr);
+  renderRecords();
+  alert("Kayıt gönderildi ve görüntüleyiciye eklendi.");
+};
+document.getElementById("btnClear").onclick=()=>{
+  inpTCKN.value=inpDOB.value=inpName.value=inpSurname.value=inpPhone.value="";
+};
 renderRecords();
 </script>
 </body>
