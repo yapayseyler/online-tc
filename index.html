@@ -457,15 +457,53 @@
             updateStatus('Kamera başlatılıyor...', 'loading');
             
             try {
-                // Modern tarayıcılarda kamera erişimi
-                const constraints = {
-                    video: {
-                        facingMode: 'environment', // Arka kamera (mobil)
-                        width: { ideal: 1280 },
-                        height: { ideal: 720 }
-                    },
-                    audio: false
-                };
+                // Önce mevcut kameraları listele
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoDevices = devices.filter(device => device.kind === 'videoinput');
+                console.log('Bulunan kameralar:', videoDevices);
+                
+                let constraints;
+                
+                // Ana kamerayı bulmaya çalış
+                const backCamera = videoDevices.find(device => 
+                    device.label.toLowerCase().includes('back') ||
+                    device.label.toLowerCase().includes('rear') ||
+                    device.label.toLowerCase().includes('ana') ||
+                    device.label.toLowerCase().includes('main')
+                );
+                
+                if (backCamera) {
+                    console.log('Ana kamera bulundu:', backCamera.label);
+                    constraints = {
+                        video: {
+                            deviceId: { exact: backCamera.deviceId },
+                            width: { ideal: 1920, max: 1920 },
+                            height: { ideal: 1080, max: 1080 }
+                        },
+                        audio: false
+                    };
+                } else if (videoDevices.length > 1) {
+                    // İkinci kamerayı dene (genelde ana kamera)
+                    console.log('İkinci kamera deneniyor:', videoDevices[1].label);
+                    constraints = {
+                        video: {
+                            deviceId: { exact: videoDevices[1].deviceId },
+                            width: { ideal: 1920, max: 1920 },
+                            height: { ideal: 1080, max: 1080 }
+                        },
+                        audio: false
+                    };
+                } else {
+                    // Fallback
+                    constraints = {
+                        video: {
+                            facingMode: 'environment',
+                            width: { ideal: 1920, max: 1920 },
+                            height: { ideal: 1080, max: 1080 }
+                        },
+                        audio: false
+                    };
+                }
                 
                 stream = await navigator.mediaDevices.getUserMedia(constraints);
                 video.srcObject = stream;
@@ -537,8 +575,8 @@
                     tesseractWorker = await initTesseract();
                 }
                 
-                // Her 2 saniyede bir tara
-                scanInterval = setInterval(scanForMRZ, 2000);
+                // Her 1 saniyede bir tara (daha hızlı)
+                scanInterval = setInterval(scanForMRZ, 1000);
                 
             } else {
                 isScanning = false;
@@ -552,68 +590,111 @@
             }
         }
         
-        // Tesseract başlatma
+        // Tesseract başlatma - Optimized
         async function initTesseract() {
             try {
+                updateStatus('OCR motoru başlatılıyor...', 'loading');
+                
                 const worker = await Tesseract.createWorker({
-                    logger: m => console.log(m)
+                    logger: m => console.log(m),
+                    corePath: 'https://unpkg.com/tesseract.js-core@4.0.2/tesseract-core.wasm.js'
                 });
                 
                 await worker.loadLanguage('eng');
                 await worker.initialize('eng');
+                
+                // MRZ için optimize edilmiş ayarlar
                 await worker.setParameters({
-                    tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<>',
-                    tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK,
+                    tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<',
+                    tessedit_pageseg_mode: '6', // Uniform text block
+                    preserve_interword_spaces: '0',
+                    user_defined_dpi: '200'
                 });
                 
+                updateStatus('OCR hazır - Tarama başlatılabilir', 'active');
                 return worker;
+                
             } catch (err) {
                 console.error('Tesseract başlatma hatası:', err);
+                showError('OCR motoru başlatılamadı: ' + err.message);
                 return null;
             }
         }
         
-        // MRZ tarama
+        // MRZ tarama - Optimize edilmiş
         async function scanForMRZ() {
             if (!isScanning || !video || !tesseractWorker) return;
             
             try {
-                // Video'dan frame yakala
-                canvas.width = video.videoWidth;
-                canvas.height = video.videoHeight;
+                const startTime = Date.now();
+                
+                // Yüksek çözünürlük ile frame yakala
+                canvas.width = video.videoWidth || 1920;
+                canvas.height = video.videoHeight || 1080;
                 ctx.drawImage(video, 0, 0);
                 
-                // MRZ bölgesini kırp (alt %25'lik kısım)
-                const cropHeight = canvas.height * 0.25;
+                // MRZ bölgesini daha büyük al (alt %35'lik kısım)
+                const cropHeight = Math.floor(canvas.height * 0.35);
                 const cropY = canvas.height - cropHeight;
+                const cropWidth = canvas.width;
                 
-                const imageData = ctx.getImageData(0, cropY, canvas.width, cropHeight);
+                // Görüntüyü keskinleştir ve kontrast artır
+                const imageData = ctx.getImageData(0, cropY, cropWidth, cropHeight);
+                enhanceImageForOCR(imageData);
+                
                 const croppedCanvas = document.createElement('canvas');
-                croppedCanvas.width = canvas.width;
+                croppedCanvas.width = cropWidth;
                 croppedCanvas.height = cropHeight;
                 const croppedCtx = croppedCanvas.getContext('2d');
                 croppedCtx.putImageData(imageData, 0, 0);
                 
+                // Base64'e çevir
+                const dataURL = croppedCanvas.toDataURL('image/png');
+                
                 // OCR ile tara
-                const result = await tesseractWorker.recognize(croppedCanvas);
+                const result = await tesseractWorker.recognize(dataURL);
                 const text = result.data.text;
                 
-                // MRZ kontrolü
-                const mrzData = findMRZInText(text);
+                console.log('Taranan metin:', text);
+                
+                // MRZ kontrolü - daha esnek
+                const mrzData = findMRZInTextAdvanced(text);
                 if (mrzData && mrzData.lines.length >= 3) {
                     const parsedData = parseMRZ(mrzData.lines);
-                    if (parsedData && parsedData.tcNo && parsedData.tcNo.length === 11) {
+                    if (parsedData && parsedData.tcNo && parsedData.tcNo.length >= 10) {
                         // Başarılı okuma!
                         isScanning = false;
                         clearInterval(scanInterval);
-                        updateStatus('MRZ başarıyla okundu!', 'success');
+                        updateStatus('✅ MRZ başarıyla okundu!', 'success');
                         displayResults(parsedData);
                         return;
                     }
                 }
                 
+                const elapsed = Date.now() - startTime;
+                console.log(`Tarama süresi: ${elapsed}ms`);
+                
             } catch (err) {
                 console.error('Tarama hatası:', err);
+                // Hata durumunda taramaya devam et
+            }
+        }
+        
+        // Görüntü iyileştirme fonksiyonu
+        function enhanceImageForOCR(imageData) {
+            const data = imageData.data;
+            
+            for (let i = 0; i < data.length; i += 4) {
+                // Grayscale'e çevir
+                const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+                
+                // Kontrast artır ve threshold uygula
+                const enhanced = gray > 128 ? 255 : 0;
+                
+                data[i] = enhanced;     // R
+                data[i + 1] = enhanced; // G
+                data[i + 2] = enhanced; // B
+                // Alpha (i + 3) değişmez
             }
         }
         
@@ -641,7 +722,8 @@
                 const result = await tesseractWorker.recognize(imageData);
                 const fullText = result.data.text;
                 
-                const mrzData = findMRZInText(fullText);
+                // Manuel işlem için gelişmiş MRZ bulma
+                const mrzData = findMRZInTextAdvanced(fullText);
                 
                 if (mrzData && mrzData.lines.length >= 3) {
                     const parsedData = parseMRZ(mrzData.lines);
@@ -663,28 +745,78 @@
             }
         }
         
-        // MRZ bulma fonksiyonu
-        function findMRZInText(text) {
+        // Gelişmiş MRZ bulma fonksiyonu
+        function findMRZInTextAdvanced(text) {
             const lines = text.split('\n');
-            const mrzLines = [];
+            const potentialMRZLines = [];
             
-            const mrzPattern = /[A-Z0-9<]{20,}/;
+            console.log('Tüm satırlar:', lines);
             
-            for (let i = 0; i < lines.length; i++) {
-                const cleanLine = lines[i]
+            for (let line of lines) {
+                // Satırı temizle
+                let cleanLine = line
                     .toUpperCase()
                     .replace(/\s/g, '')
                     .replace(/[^A-Z0-9<]/g, '');
                 
-                if (cleanLine.length >= 20 && cleanLine.includes('<') && mrzPattern.test(cleanLine)) {
-                    const processedLine = cleanMRZLine(cleanLine);
-                    mrzLines.push(processedLine);
+                // MRZ karakteristikleri:
+                // - En az 15 karakter
+                // - Çoğunlukla büyük harf, rakam ve < içerir
+                // - TC no için rakam dizisi içerir
+                
+                if (cleanLine.length >= 15) {
+                    // < işareti veya çok sayıda rakam varsa potansiyel MRZ
+                    const hasAngleBrackets = cleanLine.includes('<');
+                    const numberCount = (cleanLine.match(/[0-9]/g) || []).length;
+                    const letterCount = (cleanLine.match(/[A-Z]/g) || []).length;
                     
-                    if (mrzLines.length >= 3) break;
+                    if (hasAngleBrackets || numberCount >= 5) {
+                        console.log('Potansiyel MRZ satırı:', cleanLine);
+                        potentialMRZLines.push(cleanMRZLineAdvanced(cleanLine));
+                    }
                 }
             }
             
-            return mrzLines.length >= 3 ? { lines: mrzLines.slice(0, 3) } : null;
+            // En az 3 satır varsa ve bunlar MRZ pattern'ine uyuyorsa
+            if (potentialMRZLines.length >= 3) {
+                // İlk 3 satırı al
+                return { lines: potentialMRZLines.slice(0, 3) };
+            }
+            
+            return null;
+        }
+        
+        // Gelişmiş MRZ satırı temizleme
+        function cleanMRZLineAdvanced(line) {
+            // Önce yaygın OCR hatalarını düzelt
+            let cleaned = line
+                .replace(/0/g, 'O')
+                .replace(/1/g, 'I')
+                .replace(/5/g, 'S')
+                .replace(/8/g, 'B')
+                .replace(/6/g, 'G')
+                .replace(/\s/g, '');
+            
+            // Eğer satır TC no pozisyonundaysa (2. satır), başındaki 11 karakteri rakama çevir
+            const tcPattern = /^[A-Z0-9]{11}/;
+            if (tcPattern.test(cleaned)) {
+                const tcPart = cleaned.substring(0, 11)
+                    .replace(/O/g, '0')
+                    .replace(/I/g, '1')
+                    .replace(/S/g, '5')
+                    .replace(/B/g, '8')
+                    .replace(/G/g, '6');
+                cleaned = tcPart + cleaned.substring(11);
+            }
+            
+            // 30 karaktere tamamla veya kısalt
+            if (cleaned.length < 30) {
+                cleaned = cleaned.padEnd(30, '<');
+            } else if (cleaned.length > 30) {
+                cleaned = cleaned.substring(0, 30);
+            }
+            
+            return cleaned;
         }
         
         // MRZ satırı temizleme
