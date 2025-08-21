@@ -452,65 +452,58 @@
             updateStatus('Hazır - Kamera başlatılabilir', 'ready');
         });
         
-        // Kamera başlatma - Geliştirilmiş
+        // Kamera başlatma - Agresif Ana Kamera Seçimi
         async function startCamera() {
             updateStatus('Kamera başlatılıyor...', 'loading');
             
             try {
-                // Önce cihazları listele (izin gerekebilir)
-                let devices = [];
-                try {
-                    devices = await navigator.mediaDevices.enumerateDevices();
-                    console.log('İzin öncesi cihazlar:', devices.length);
-                } catch (e) {
-                    console.log('İzin gerekli, temel erişim deneniyor...');
-                }
+                // İlk olarak basit erişim al (izin için)
+                console.log('İzin almak için basit kamera erişimi...');
+                let tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
+                tempStream.getTracks().forEach(track => track.stop()); // Hemen kapat
                 
-                // İlk erişim - basit constraint
-                let stream = null;
-                try {
-                    stream = await navigator.mediaDevices.getUserMedia({
-                        video: { facingMode: 'environment' },
-                        audio: false
-                    });
-                    console.log('İlk kamera erişimi başarılı');
-                } catch (e) {
-                    console.log('Environment modu başarısız, standart deneniyor...');
-                    stream = await navigator.mediaDevices.getUserMedia({
-                        video: true,
-                        audio: false
-                    });
-                }
-                
-                // Şimdi tam listeyi al
-                devices = await navigator.mediaDevices.enumerateDevices();
+                // Şimdi tüm cihazları listele
+                const devices = await navigator.mediaDevices.enumerateDevices();
                 const videoDevices = devices.filter(device => device.kind === 'videoinput');
-                console.log('Bulunan kameralar:', videoDevices.map(d => ({ label: d.label, id: d.deviceId.slice(0,20) + '...' })));
                 
-                // Ana kamerayı bul
-                let targetCamera = null;
+                console.log('🎥 BULUNAN KAMERALAR:');
+                videoDevices.forEach((device, index) => {
+                    console.log(`${index}: ${device.label} (ID: ${device.deviceId.slice(0,20)}...)`);
+                });
                 
-                // Yöntem 1: Label'da 'back', 'rear', 'environment' ara
-                targetCamera = videoDevices.find(device => {
+                // Ana kamera bulma stratejileri
+                let selectedDevice = null;
+                
+                // STRATEJİ 1: Label'da "back", "rear", "environment" ara
+                selectedDevice = videoDevices.find(device => {
                     const label = device.label.toLowerCase();
                     return label.includes('back') || 
                            label.includes('rear') || 
-                           label.includes('environment') || 
-                           label.includes('ana') ||
-                           label.includes('main') ||
-                           label.includes('0') // Genelde ilk kamera ana kamera
+                           label.includes('environment') ||
+                           label.includes('arka') ||
+                           label.includes('ana kamera') ||
+                           label.includes('main camera');
                 });
                 
-                // Yöntem 2: Eğer bulamazsa ve 2+ kamera varsa, ikincisini dene
-                if (!targetCamera && videoDevices.length > 1) {
-                    targetCamera = videoDevices[1]; // Genelde ana kamera 2. sıradadır
-                    console.log('İkinci kamera deneniyor (genelde ana kamera)');
+                if (selectedDevice) {
+                    console.log('✅ STRATEJİ 1 BAŞARILI: Label analizi ile ana kamera bulundu:', selectedDevice.label);
                 }
                 
-                // Yöntem 3: Çözünürlük testi ile ana kamerayı bul
-                if (!targetCamera && videoDevices.length > 1) {
-                    for (const device of videoDevices) {
+                // STRATEJİ 2: Mobilde genelde ikinci kamera ana kamera
+                if (!selectedDevice && videoDevices.length >= 2) {
+                    selectedDevice = videoDevices[1];
+                    console.log('✅ STRATEJİ 2: İkinci kamera deneniyor (mobil standart):', selectedDevice.label);
+                }
+                
+                // STRATEJİ 3: Çözünürlük testi - yüksek çözünürlüklü olan genelde ana
+                if (!selectedDevice || selectedDevice.label.toLowerCase().includes('front')) {
+                    console.log('🔍 STRATEJİ 3: Çözünürlük testi başlatılıyor...');
+                    
+                    for (let i = 0; i < videoDevices.length; i++) {
+                        const device = videoDevices[i];
                         try {
+                            console.log(`Test ediliyor: ${device.label}`);
+                            
                             const testStream = await navigator.mediaDevices.getUserMedia({
                                 video: {
                                     deviceId: { exact: device.deviceId },
@@ -519,48 +512,112 @@
                                 }
                             });
                             
-                            const tracks = testStream.getVideoTracks();
-                            const settings = tracks[0].getSettings();
-                            testStream.getTracks().forEach(track => track.stop());
+                            const track = testStream.getVideoTracks()[0];
+                            const settings = track.getSettings();
+                            const capabilities = track.getCapabilities();
                             
-                            console.log(`Kamera ${device.label}: ${settings.width}x${settings.height}`);
+                            console.log(`📐 ${device.label}: ${settings.width}x${settings.height}, Max: ${capabilities.width?.max}x${capabilities.height?.max}`);
                             
-                            // Yüksek çözünürlüklü kamera genelde ana kamera
-                            if (settings.width >= 1280) {
-                                targetCamera = device;
+                            testStream.getTracks().forEach(t => t.stop());
+                            
+                            // Yüksek çözünürlük = muhtemelen ana kamera
+                            if ((settings.width >= 1280 || capabilities.width?.max >= 1920) && 
+                                !device.label.toLowerCase().includes('front') &&
+                                !device.label.toLowerCase().includes('selfie')) {
+                                selectedDevice = device;
+                                console.log('✅ STRATEJİ 3 BAŞARILI: Yüksek çözünürlüklü kamera bulundu!');
                                 break;
                             }
+                            
                         } catch (e) {
-                            console.log(`Kamera test edilemedi: ${device.label}`);
+                            console.log(`❌ Test başarısız: ${device.label} - ${e.message}`);
                         }
                     }
                 }
                 
-                // Mevcut stream'i durdur
-                if (stream) {
-                    stream.getTracks().forEach(track => track.stop());
+                // STRATEJİ 4: Hiçbiri çalışmazsa son kamerayı dene
+                if (!selectedDevice && videoDevices.length > 0) {
+                    selectedDevice = videoDevices[videoDevices.length - 1];
+                    console.log('⚠️ STRATEJİ 4: Son çare - son kamera:', selectedDevice.label);
                 }
                 
-                // Hedef kamera ile yeni stream aç
-                let finalConstraints = {
-                    video: {
-                        width: { ideal: 1920, max: 4096 },
-                        height: { ideal: 1080, max: 2160 },
-                        facingMode: 'environment'
-                    },
-                    audio: false
-                };
+                // KAMERA AÇMA
+                let finalConstraints;
                 
-                if (targetCamera) {
-                    console.log('Seçilen kamera:', targetCamera.label);
-                    finalConstraints.video = {
-                        deviceId: { exact: targetCamera.deviceId },
-                        width: { ideal: 1920, max: 4096 },
-                        height: { ideal: 1080, max: 2160 }
+                if (selectedDevice) {
+                    console.log(`🎯 SEÇILEN KAMERA: ${selectedDevice.label}`);
+                    finalConstraints = {
+                        video: {
+                            deviceId: { exact: selectedDevice.deviceId },
+                            width: { ideal: 1920, min: 640, max: 4096 },
+                            height: { ideal: 1080, min: 480, max: 2160 },
+                            frameRate: { ideal: 30, min: 15 }
+                        },
+                        audio: false
+                    };
+                } else {
+                    console.log('⚠️ FALLBACK: facingMode environment kullanılıyor');
+                    finalConstraints = {
+                        video: {
+                            facingMode: { ideal: 'environment' },
+                            width: { ideal: 1920, min: 640 },
+                            height: { ideal: 1080, min: 480 }
+                        },
+                        audio: false
                     };
                 }
                 
+                console.log('📱 Final constraints:', finalConstraints);
                 stream = await navigator.mediaDevices.getUserMedia(finalConstraints);
+                
+                // Stream bilgilerini logla
+                const videoTrack = stream.getVideoTracks()[0];
+                const settings = videoTrack.getSettings();
+                console.log(`🎬 AKTİF KAMERA: ${videoTrack.label}`);
+                console.log(`📐 ÇÖZÜNÜRLÜK: ${settings.width}x${settings.height}`);
+                console.log(`🎯 FACING MODE: ${settings.facingMode || 'belirtilmemiş'}`);
+                
+                // Video element'e bağla
+                video.srcObject = stream;
+                
+                video.onloadedmetadata = () => {
+                    video.play();
+                    
+                    // UI güncelle
+                    document.getElementById('videoContainer').style.display = 'block';
+                    document.getElementById('startCameraBtn').style.display = 'none';
+                    document.getElementById('scanBtn').style.display = 'inline-block';
+                    document.getElementById('captureBtn').style.display = 'inline-block';
+                    document.getElementById('stopBtn').style.display = 'inline-block';
+                    
+                    updateStatus(`Kamera hazır: ${videoTrack.label} (${settings.width}x${settings.height})`, 'active');
+                    hideError();
+                    
+                    console.log('✅ KAMERA BAŞARILI ŞEKİLDE BAŞLATILDI!');
+                };
+                
+            } catch (err) {
+                console.error('❌ KAMERA HATASI:', err);
+                
+                let errorMessage = 'Kamera açılamadı: ';
+                
+                if (err.name === 'NotAllowedError') {
+                    errorMessage = 'Kamera izni reddedildi. Lütfen izin verin:\n';
+                    errorMessage += '• Adres çubuğundaki kamera simgesine tıklayın\n';
+                    errorMessage += '• "İzin Ver" seçeneğini seçin\n';
+                    errorMessage += '• Sayfayı yenileyin (F5)';
+                } else if (err.name === 'NotFoundError') {
+                    errorMessage = 'Kamera bulunamadı. Cihazınızda kamera olduğundan emin olun.';
+                } else if (err.name === 'NotReadableError') {
+                    errorMessage = 'Kamera başka bir uygulama tarafından kullanılıyor.';
+                } else {
+                    errorMessage += err.message;
+                }
+                
+                showError(errorMessage);
+                updateStatus('Kamera hatası', 'error');
+            }
+        }
                 video.srcObject = stream;
                 
                 video.onloadedmetadata = () => {
