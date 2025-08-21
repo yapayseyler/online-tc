@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Kimlik Kayıtları - Görüntüleme</title>
+<style>
+  :root{--bg:#0f1115;--card:#171923;--ink:#e8e8ea;--muted:#9aa0a6;--acc:#4f8cff}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+  .wrap{max-width:1200px;margin:0 auto;padding:14px}
+  .card{background:var(--card);border-radius:16px;box-shadow:0 6px 30px rgb(0 0 0/.25);padding:20px;margin:12px 0}
+  h1{margin:0 0 16px;font-size:24px;color:var(--acc)}
+  h2{margin:0 0 12px;font-size:18px}
+  .stats{display:flex;gap:20px;margin-bottom:20px;flex-wrap:wrap}
+  .stat-card{background:#1a1f2e;padding:16px;border-radius:12px;text-align:center;min-width:120px}
+  .stat-number{font-size:24px;font-weight:bold;color:var(--acc)}
+  .stat-label{font-size:12px;color:var(--muted);margin-top:4px}
+  table{width:100%;border-collapse:collapse;margin-top:16px}
+  th,td{padding:12px;border-bottom:1px solid #2b2f3a;font-size:14px;text-align:left}
+  th{background:#1a1f2e;font-weight:600;color:var(--acc)}
+  tr:hover{background:#1a1f2e}
+  .record-card{background:#1a1f2e;border-radius:12px;padding:16px;margin:12px 0;border-left:4px solid var(--acc)}
+  .record-header{display:flex;justify-content:between;align-items:center;margin-bottom:8px}
+  .record-name{font-size:16px;font-weight:600}
+  .record-time{font-size:12px;color:var(--muted)}
+  .record-details{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-top:12px}
+  .detail-item{display:flex;flex-direction:column}
+  .detail-label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px}
+  .detail-value{font-size:14px;margin-top:2px;word-break:break-word}
+  .empty-state{text-align:center;padding:40px;color:var(--muted)}
+  .refresh-btn{background:var(--acc);color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-size:14px}
+  .refresh-btn:hover{background:#3d7ae6}
+  .status-indicator{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:8px}
+  .status-online{background:#22c55e}
+  .status-offline{background:#ef4444}
+  .header-controls{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
+  .view-toggle{display:flex;gap:8px}
+  .view-btn{background:#2a2e3a;color:var(--ink);border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-size:14px}
+  .view-btn.active{background:var(--acc);color:#fff}
+  @media (max-width:768px){
+    .stats{justify-content:center}
+    .record-details{grid-template-columns:1fr}
+    .header-controls{flex-direction:column;gap:12px;align-items:stretch}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <div class="header-controls">
+      <div>
+        <h1>
+          <span id="connectionStatus" class="status-indicator status-online"></span>
+          Kimlik Kayıtları
+        </h1>
+        <p style="margin:0;color:var(--muted);font-size:14px">Taranan kimlik bilgileri gerçek zamanlı olarak burada görüntülenir</p>
+      </div>
+      <div class="view-toggle">
+        <button id="cardView" class="view-btn active">Kart Görünümü</button>
+        <button id="tableView" class="view-btn">Tablo Görünümü</button>
+        <button id="refreshBtn" class="refresh-btn">🔄 Yenile</button>
+      </div>
+    </div>
+
+    <div class="stats">
+      <div class="stat-card">
+        <div id="totalRecords" class="stat-number">0</div>
+        <div class="stat-label">Toplam Kayıt</div>
+      </div>
+      <div class="stat-card">
+        <div id="todayRecords" class="stat-number">0</div>
+        <div class="stat-label">Bugün Eklenen</div>
+      </div>
+      <div class="stat-card">
+        <div id="lastUpdate" class="stat-number">--:--</div>
+        <div class="stat-label">Son Güncelleme</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Kayıtlar</h2>
+    
+    <!-- Kart Görünümü -->
+    <div id="cardContainer">
+      <div id="emptyState" class="empty-state">
+        <p>Henüz kayıt bulunmuyor.</p>
+        <p style="font-size:12px">Kimlik tarayıcısından yeni kayıtlar eklendiğinde burada görünecektir.</p>
+      </div>
+    </div>
+
+    <!-- Tablo Görünümü -->
+    <div id="tableContainer" style="display:none">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>TCKN</th>
+            <th>Ad Soyad</th>
+            <th>Doğum Tarihi</th>
+            <th>Telefon</th>
+            <th>Eklenme Zamanı</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody">
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentView = 'card';
+let records = [];
+
+// Bağlantı durumunu kontrol et
+function updateConnectionStatus() {
+  const indicator = document.getElementById('connectionStatus');
+  if (navigator.onLine) {
+    indicator.className = 'status-indicator status-online';
+  } else {
+    indicator.className = 'status-indicator status-offline';
+  }
+}
+
+// Kayıtları yükle
+function loadRecords() {
+  try {
+    // Paylaşılan kayıtları yükle
+    const sharedRecords = JSON.parse(localStorage.getItem('shared_records') || '[]');
+    // Ana uygulama kayıtlarını da yükle
+    const mainRecords = JSON.parse(localStorage.getItem('tcid_records_v1') || '[]');
+    
+    // İki kaynağı birleştir ve benzersiz kayıtları al
+    const allRecords = [...sharedRecords, ...mainRecords];
+    const uniqueRecords = allRecords.filter((record, index, self) => 
+      index === self.findIndex(r => r.tckn === record.tckn && r.timestamp === record.timestamp)
+    );
+    
+    records = uniqueRecords.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    updateDisplay();
+  } catch (error) {
+    console.error('Kayıtlar yüklenirken hata:', error);
+  }
+}
+
+// İstatistikleri güncelle
+function updateStats() {
+  const total = records.length;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayCount = records.filter(r => {
+    const recordDate = new Date(r.timestamp || 0);
+    recordDate.setHours(0, 0, 0, 0);
+    return recordDate.getTime() === today.getTime();
+  }).length;
+  
+  document.getElementById('totalRecords').textContent = total;
+  document.getElementById('todayRecords').textContent = todayCount;
+  document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString('tr-TR', {
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
+// Kart görünümünü oluştur
+function renderCardView() {
+  const container = document.getElementById('cardContainer');
+  const emptyState = document.getElementById('emptyState');
+  
+  if (records.length === 0) {
+    emptyState.style.display = 'block';
+    container.innerHTML = '';
+    container.appendChild(emptyState);
+    return;
+  }
+  
+  emptyState.style.display = 'none';
+  container.innerHTML = '';
+  
+  records.forEach((record, index) => {
+    const card = document.createElement('div');
+    card.className = 'record-card';
+    
+    const timestamp = record.timestamp ? new Date(record.timestamp) : new Date();
+    const timeStr = timestamp.toLocaleString('tr-TR');
+    
+    card.innerHTML = `
+      <div class="record-header">
+        <div class="record-name">${record.ad || ''} ${record.soyad || ''}</div>
+        <div class="record-time">${timeStr}</div>
+      </div>
+      <div class="record-details">
+        <div class="detail-item">
+          <div class="detail-label">TC Kimlik No</div>
+          <div class="detail-value">${record.tckn || '—'}</div>
+        </div>
+        <div class="detail-item">
+          <div class="detail-label">Ad</div>
+          <div class="detail-value">${record.ad || '—'}</div>
+        </div>
+        <div class="detail-item">
+          <div class="detail-label">Soyad</div>
+          <div class="detail-value">${record.soyad || '—'}</div>
+        </div>
+        <div class="detail-item">
+          <div class="detail-label">Doğum Tarihi</div>
+          <div class="detail-value">${record.dogum || '—'}</div>
+        </div>
+        <div class="detail-item">
+          <div class="detail-label">Telefon</div>
+          <div class="detail-value">${record.telefon || '—'}</div>
+        </div>
+      </div>
+    `;
+    
+    container.appendChild(card);
+  });
+}
+
+// Tablo görünümünü oluştur
+function renderTableView() {
+  const tbody = document.getElementById('tableBody');
+  tbody.innerHTML = '';
+  
+  if (records.length === 0) {
+    const row = tbody.insertRow();
+    const cell = row.insertCell();
+    cell.colSpan = 6;
+    cell.style.textAlign = 'center';
+    cell.style.color = 'var(--muted)';
+    cell.textContent = 'Henüz kayıt bulunmuyor.';
+    return;
+  }
+  
+  records.forEach((record, index) => {
+    const row = tbody.insertRow();
+    const timestamp = record.timestamp ? new Date(record.timestamp) : new Date();
+    
+    row.insertCell().textContent = index + 1;
+    row.insertCell().textContent = record.tckn || '—';
+    row.insertCell().textContent = `${record.ad || ''} ${record.soyad || ''}`.trim() || '—';
+    row.insertCell().textContent = record.dogum || '—';
+    row.insertCell().textContent = record.telefon || '—';
+    row.insertCell().textContent = timestamp.toLocaleString('tr-TR');
+  });
+}
+
+// Görünümü güncelle
+function updateDisplay() {
+  updateStats();
+  
+  if (currentView === 'card') {
+    renderCardView();
+  } else {
+    renderTableView();
+  }
+}
+
+// Görünüm değiştir
+function switchView(view) {
+  currentView = view;
+  
+  document.getElementById('cardView').classList.toggle('active', view === 'card');
+  document.getElementById('tableView').classList.toggle('active', view === 'table');
+  
+  document.getElementById('cardContainer').style.display = view === 'card' ? 'block' : 'none';
+  document.getElementById('tableContainer').style.display = view === 'table' ? 'block' : 'none';
+  
+  updateDisplay();
+}
+
+// Event listeners
+document.addEventListener('DOMContentLoaded', () => {
+  loadRecords();
+  updateConnectionStatus();
+  
+  document.getElementById('cardView').addEventListener('click', () => switchView('card'));
+  document.getElementById('tableView').addEventListener('click', () => switchView('table'));
+  document.getElementById('refreshBtn').addEventListener('click', loadRecords);
+  
+  // Otomatik yenileme (5 saniyede bir)
+  setInterval(loadRecords, 5000);
+  
+  // Bağlantı durumu değişikliklerini dinle
+  window.addEventListener('online', updateConnectionStatus);
+  window.addEventListener('offline', updateConnectionStatus);
+  
+  // localStorage değişikliklerini dinle (aynı domain içinde)
+  window.addEventListener('storage', (e) => {
+    if (e.key === 'shared_records' || e.key === 'tcid_records_v1') {
+      loadRecords();
+    }
+  });
+});
+
+// Sayfa görünür olduğunda yenile
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) {
+    loadRecords();
+  }
+});
+</script>
+</body>
+</html>
+
