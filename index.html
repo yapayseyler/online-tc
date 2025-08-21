@@ -618,6 +618,29 @@
                 updateStatus('Kamera hatası', 'error');
             }
         }
+                
+            } catch (err) {
+                console.error('❌ KAMERA HATASI:', err);
+                
+                let errorMessage = 'Kamera açılamadı: ';
+                
+                if (err.name === 'NotAllowedError') {
+                    errorMessage = 'Kamera izni reddedildi. Lütfen izin verin:\n';
+                    errorMessage += '• Adres çubuğundaki kamera simgesine tıklayın\n';
+                    errorMessage += '• "İzin Ver" seçeneğini seçin\n';
+                    errorMessage += '• Sayfayı yenileyin (F5)';
+                } else if (err.name === 'NotFoundError') {
+                    errorMessage = 'Kamera bulunamadı. Cihazınızda kamera olduğundan emin olun.';
+                } else if (err.name === 'NotReadableError') {
+                    errorMessage = 'Kamera başka bir uygulama tarafından kullanılıyor.';
+                } else {
+                    errorMessage += err.message;
+                }
+                
+                showError(errorMessage);
+                updateStatus('Kamera hatası', 'error');
+            }
+        }
                 video.srcObject = stream;
                 
                 video.onloadedmetadata = () => {
